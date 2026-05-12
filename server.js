@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
+import sessionFileStoreFactory from 'session-file-store';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { createClient } from '@supabase/supabase-js';
@@ -12,6 +13,12 @@ dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 
 const app = express();
 const port = Number(process.env.PORT || 8200);
+const FileStore = sessionFileStoreFactory(session);
+const sessionStorePath = `${process.cwd()}\.sessions`;
+
+if (!fs.existsSync(sessionStorePath)) {
+  fs.mkdirSync(sessionStorePath, { recursive: true });
+}
 
 app.set('trust proxy', 1);
 app.use(cors({ credentials: true, origin: true }));
@@ -20,6 +27,11 @@ app.use(express.urlencoded({ extended: false }));
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'spf-prompt-factory-local-session-secret',
+    store: new FileStore({
+      path: sessionStorePath,
+      ttl: 60 * 60 * 24 * 7,
+      retries: 1,
+    }),
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -474,8 +486,10 @@ async function savePromptIfPossible(userId, task, prompt) {
 }
 
 function getGeminiClient() {
-  if (process.env.GEMINI_API_KEY) {
-    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+
+  if (apiKey) {
+    return new GoogleGenAI({ apiKey });
   }
 
   const credentialsPath =
@@ -518,6 +532,17 @@ function getGeminiClient() {
   });
 }
 
+function hasGeminiRuntimeConfig() {
+  const apiKey = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  const credentialsPath =
+    process.env.GEMINI_SERVICE_ACCOUNT_PATH ||
+    process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const hasCredentialFile = credentialsPath ? fs.existsSync(credentialsPath) : false;
+  const hasProject = Boolean(process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_PROJECT_ID);
+
+  return apiKey || (hasCredentialFile && hasProject);
+}
+
 function getModelName() {
   return (
     process.env.GEMINI_MODEL ||
@@ -544,8 +569,8 @@ function handleError(res, error) {
     });
   }
   if (error.status === 401 || error.status === 403) {
-    return res.status(401).json({
-      error: 'Servis hesabi ile Gemini/Vertex AI yetkilendirmesi basarisiz. JSON dosyasini, Vertex AI API erisimini ve IAM rollerini kontrol edin.',
+    return res.status(503).json({
+      error: 'Gemini/Vertex AI arka ucu hazir degil. API key veya servis hesabi ayarlarini kontrol edin.',
     });
   }
   if (error.name === 'AbortError') {
@@ -1137,40 +1162,81 @@ ${renderHead('SPF Prompt Factory App')}
     const generateBtn = document.getElementById('generateBtn');
     const copyBtn = document.getElementById('copyBtn');
     const statusEl = document.getElementById('status');
+    let runtimeBlocked = false;
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
       statusEl.classList.toggle('error', isError);
     }
 
+    async function ensureAppRuntime() {
+      const [sessionResponse, configResponse] = await Promise.all([
+        fetch('/api/auth/session', { credentials: 'include' }),
+        fetch('/api/auth/config', { credentials: 'include' }),
+      ]);
+
+      const session = await sessionResponse.json();
+      if (!session.authenticated) {
+        window.location.href = '/login';
+        return false;
+      }
+
+      const config = await configResponse.json();
+      if (!config.geminiConfigured) {
+        runtimeBlocked = true;
+        generateBtn.disabled = true;
+        setStatus('Gemini backend ayari eksik. API key veya servis hesabi tanimlanmali.', true);
+        return false;
+      }
+
+      runtimeBlocked = false;
+      generateBtn.disabled = false;
+      return true;
+    }
+
     generateBtn.addEventListener('click', async () => {
       const task = taskInput.value.trim();
       if (!task) {
-        setStatus('Görev metni gerekli.', true);
+        setStatus('Gorev metni gerekli.', true);
         return;
       }
+      if (runtimeBlocked) return;
       generateBtn.disabled = true;
-      generateBtn.innerHTML = '<i data-lucide="loader-circle"></i> Üretiliyor';
+      generateBtn.innerHTML = '<i data-lucide="loader-circle"></i> Uretiliyor';
       lucide.createIcons();
-      setStatus('Gemini promptu hazırlıyor...');
+      setStatus('Gemini promptu hazirlaniyor...');
 
       try {
+        const ready = await ensureAppRuntime();
+        if (!ready) return;
+
         const response = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ task })
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Prompt üretilemedi.');
+        if (response.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        if (!response.ok) throw new Error(data.error || 'Prompt uretilemedi.');
         promptOutput.value = data.prompt;
-        setStatus(data.prompt_id ? 'Prompt üretildi ve profilinize kaydedildi.' : 'Prompt üretildi.');
+        setStatus(data.prompt_id ? 'Prompt uretildi ve profilinize kaydedildi.' : 'Prompt uretildi.');
       } catch (error) {
-        setStatus(error.message || 'Beklenmeyen hata oluştu.', true);
+        setStatus(error.message || 'Beklenmeyen hata olustu.', true);
       } finally {
         generateBtn.disabled = false;
-        generateBtn.innerHTML = '<i data-lucide="sparkles"></i> Prompt Üret';
+        generateBtn.innerHTML = '<i data-lucide="sparkles"></i> Prompt Uret';
         lucide.createIcons();
       }
+    });
+
+    ensureAppRuntime().catch(() => {
+      runtimeBlocked = true;
+      generateBtn.disabled = true;
+      setStatus('Uygulama oturumu dogrulanamadi. Sayfayi yenileyip tekrar giris yapin.', true);
     });
 
     copyBtn.addEventListener('click', async () => {
@@ -1458,6 +1524,7 @@ app.get('/api/auth/config', (_req, res) => {
   res.json({
     googleOAuthConfigured,
     supabaseConfigured: Boolean(supabaseAdmin),
+    geminiConfigured: hasGeminiRuntimeConfig(),
     callbackUrl: configuredGoogleCallbackUrl,
   });
 });
