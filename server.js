@@ -31,7 +31,8 @@ app.use(
     store: new FileStore({
       path: sessionStorePath,
       ttl: 60 * 60 * 24 * 7,
-      retries: 1,
+      retries: 0,
+      logFn: () => {},
     }),
     resave: false,
     saveUninitialized: false,
@@ -46,13 +47,16 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(async (req, _res, next) => {
-  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id) {
+  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id || !isSupabaseAdminAvailable()) {
     return next();
   }
 
   try {
     await hydrateAuthenticatedUser(req);
   } catch (error) {
+    if (supabaseAdminDisabledReason) {
+      return next();
+    }
     console.error('Deferred Supabase user hydration failed:', {
       message: error?.message,
       code: error?.code,
@@ -91,6 +95,10 @@ const configuredGoogleCallbackUrl =
 
 function normalizeBaseUrl(value) {
   return String(value || `http://localhost:${port}`).replace(/\/+$/, '');
+}
+
+function isSupabaseAdminAvailable() {
+  return Boolean(supabaseAdmin) && !supabaseAdminDisabledReason;
 }
 
 function getRequestBaseUrl(req) {
@@ -453,7 +461,7 @@ async function syncGoogleUser(profileUser) {
 }
 
 async function hydrateAuthenticatedUser(req) {
-  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id) {
+  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id || !isSupabaseAdminAvailable()) {
     return req.user;
   }
 
@@ -468,7 +476,7 @@ async function hydrateAuthenticatedUser(req) {
 }
 
 async function fetchUserPrompts(userId) {
-  if (!userId) return [];
+  if (!userId || !isSupabaseAdminAvailable()) return [];
   const client = ensureSupabaseAdmin();
   const { data, error } = await client
     .from('prompts')
@@ -485,7 +493,7 @@ async function fetchUserPrompts(userId) {
 }
 
 async function savePromptIfPossible(userId, task, prompt) {
-  if (!userId) return null;
+  if (!userId || !isSupabaseAdminAvailable()) return null;
 
   const client = ensureSupabaseAdmin();
   const { data, error } = await client
@@ -1572,6 +1580,9 @@ app.post('/api/generate', requireAuth, async (req, res) => {
       await hydrateAuthenticatedUser(req);
       promptId = await savePromptIfPossible(req.user?.id, task.trim(), prompt);
     } catch (saveError) {
+      if (supabaseAdminDisabledReason) {
+        return res.json({ prompt, prompt_id: null });
+      }
       console.error('Prompt save skipped:', {
         message: saveError?.message,
         code: saveError?.code,
@@ -1591,6 +1602,9 @@ app.get('/api/prompts', requireAuth, async (req, res) => {
     const prompts = await fetchUserPrompts(req.user.id);
     return res.json({ prompts });
   } catch (error) {
+    if (supabaseAdminDisabledReason) {
+      return res.json({ prompts: [] });
+    }
     console.error('Prompt list could not be loaded:', {
       message: error?.message,
       code: error?.code,
@@ -1646,6 +1660,9 @@ app.get('/profile', requireAuth, async (req, res) => {
     const prompts = await fetchUserPrompts(req.user.id);
     res.send(renderProfilePage(req.user, prompts));
   } catch (error) {
+    if (supabaseAdminDisabledReason) {
+      return res.send(renderProfilePage(req.user, []));
+    }
     console.error('Profile page fallback rendered:', {
       message: error?.message,
       code: error?.code,
