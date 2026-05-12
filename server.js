@@ -906,7 +906,7 @@ function renderHead(title) {
 }
 
 function renderBrand() {
-  return `<a class="brand" href="/app" aria-label="SPF Prompt Factory">
+  return `<a class="brand" href="/" aria-label="SPF Prompt Factory">
     <span class="brand-icon"><i data-lucide="factory"></i></span>
     <span><span style="color:var(--accent)">SPF</span> Prompt Factory</span>
   </a>`;
@@ -968,8 +968,8 @@ ${renderHead('Giriş Yap - SPF Prompt Factory')}
 <body>
   <main class="login-screen">
     <section class="login-card" aria-label="Giriş">
-      <div class="brand-icon"><i data-lucide="factory"></i></div>
-      <h1>SPF Prompt Factory</h1>
+      <div style="display:flex;justify-content:center;margin-bottom:18px">${renderBrand()}</div>
+      <h1 style="font-size:28px">SPF Prompt Factory</h1>
       <p class="subtitle" style="margin:0 auto">Derdini anlat, model talimatını al.</p>
       <a class="btn google-btn" href="/auth/google">
         <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
