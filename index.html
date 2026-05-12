@@ -999,7 +999,7 @@
         <a href="#how-it-works" class="nav-link">Nasıl Çalışır</a>
         <a href="#features" class="nav-link">Özellikler</a>
         <a href="#pricing" class="nav-link">Fiyatlandırma</a>
-        <a href="/app" class="btn btn-primary">
+        <a href="/app" class="btn btn-primary" data-auth-cta="trial">
           Ücretsiz Dene <i data-lucide="arrow-right" style="width: 18px; height: 18px;"></i>
         </a>
       </div>
@@ -1322,7 +1322,7 @@ Build a premium single-page landing page for SPF.
         <div class="cta-content">
           <h2>Bugün başla, yarın üret.</h2>
           <p>Binlerce prompt mühendisi arasına katılın, projelerinizi hızlandırın.</p>
-          <a href="/app" class="btn btn-primary">Ücretsiz Dene</a>
+          <a href="/app" class="btn btn-primary" data-auth-cta="trial">Ücretsiz Dene</a>
         </div>
       </div>
     </div>
@@ -1385,6 +1385,29 @@ Build a premium single-page landing page for SPF.
   <script>
     // Initialize Lucide Icons
     lucide.createIcons();
+
+    async function syncAuthCtas() {
+      const ctas = document.querySelectorAll('[data-auth-cta="trial"]');
+      if (!ctas.length) return;
+
+      try {
+        const response = await fetch('/api/auth/session', { credentials: 'include' });
+        if (!response.ok) return;
+
+        const session = await response.json();
+        if (!session.authenticated) return;
+
+        ctas.forEach((cta) => {
+          cta.href = '/profile';
+          cta.innerHTML = 'Profil <i data-lucide="user" style="width: 18px; height: 18px;"></i>';
+        });
+        lucide.createIcons();
+      } catch {
+        // Keep the default CTA when auth state is unavailable.
+      }
+    }
+
+    syncAuthCtas();
 
     // Mockup Data
     const mockups = [
