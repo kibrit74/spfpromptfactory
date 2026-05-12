@@ -227,14 +227,36 @@
       background: rgba(255, 255, 255, 0.07);
       transform: translateY(-1px);
     }
+    .profile-cta-avatar-wrap {
+      position: relative;
+      display: inline-grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      overflow: hidden;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      flex-shrink: 0;
+    }
     .profile-cta-avatar {
       width: 38px;
       height: 38px;
       border-radius: 50%;
       object-fit: cover;
-      background: #1a1a1a;
-      border: 1px solid #2a2a2a;
-      flex-shrink: 0;
+      display: block;
+    }
+    .profile-cta-fallback {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      background: linear-gradient(135deg, #232334, #151515);
     }
     .profile-cta-name {
       max-width: 140px;
@@ -1435,11 +1457,22 @@ Build a premium single-page landing page for SPF.
         const session = await response.json();
         if (!session.authenticated || !session.user) return;
 
+        const initials = String(session.user.name || 'Profil')
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0] ? part[0].toUpperCase() : '')
+          .join('') || 'SP';
+
         ctas.forEach((cta) => {
           cta.href = '/profile';
           cta.className = 'profile-cta';
           cta.innerHTML = `
-            <img class="profile-cta-avatar" src="${session.user.avatar_url || ''}" alt="${session.user.name || 'Profil'}">
+            <span class="profile-cta-avatar-wrap">
+              <img class="profile-cta-avatar" src="${session.user.avatar_url || ''}" alt="${session.user.name || 'Profil'}" ${session.user.avatar_url ? '' : 'hidden'} onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+              <span class="profile-cta-fallback" ${session.user.avatar_url ? 'hidden' : ''}>${initials}</span>
+            </span>
             <span class="profile-cta-name">${session.user.name || 'Profil'}</span>
             <i data-lucide="chevron-down" class="profile-cta-chevron" style="width: 18px; height: 18px;"></i>
           `;

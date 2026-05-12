@@ -349,6 +349,27 @@ function escapeHtml(value = '') {
   });
 }
 
+function getInitials(value = '') {
+  const parts = String(value).trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'SP';
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('');
+}
+
+function renderAvatarMarkup({ imageClass, fallbackClass, wrapperClass, name, avatarUrl }) {
+  const safeName = escapeHtml(name || 'Profil');
+  const safeAvatarUrl = escapeHtml(avatarUrl || '');
+  const initials = escapeHtml(getInitials(name));
+  const hiddenAttr = safeAvatarUrl ? '' : ' hidden';
+
+  return `<span class="${wrapperClass}">
+    <img class="${imageClass}" src="${safeAvatarUrl}" alt="${safeName}"${hiddenAttr} onerror="this.hidden=true;this.nextElementSibling.hidden=false;">
+    <span class="${fallbackClass}"${safeAvatarUrl ? ' hidden' : ''}>${initials}</span>
+  </span>`;
+}
+
 function safeJson(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
@@ -610,13 +631,46 @@ function renderStyles() {
       color: var(--text-primary);
       cursor: pointer;
     }
+    .avatar-wrap,
+    .profile-avatar-wrap {
+      position: relative;
+      display: inline-grid;
+      place-items: center;
+      overflow: hidden;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .avatar-wrap {
+      width: 36px;
+      height: 36px;
+    }
+    .profile-avatar-wrap {
+      width: 72px;
+      height: 72px;
+    }
     .avatar {
       width: 36px;
       height: 36px;
       border-radius: 50%;
       object-fit: cover;
-      background: var(--surface2);
-      border: 1px solid var(--border);
+      display: block;
+    }
+    .avatar-fallback,
+    .profile-avatar-fallback {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 800;
+      color: var(--text-primary);
+      background: linear-gradient(135deg, #232334, #151515);
+    }
+    .avatar-fallback {
+      font-size: 12px;
     }
     .user-name {
       max-width: 150px;
@@ -779,7 +833,8 @@ function renderStyles() {
       gap: 16px;
       min-width: 0;
     }
-    .profile-avatar { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); }
+    .profile-avatar { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; display: block; }
+    .profile-avatar-fallback { font-size: 24px; }
     .profile-email { margin-top: 4px; color: var(--text-secondary); overflow-wrap: anywhere; }
     .stats {
       display: grid;
@@ -913,7 +968,6 @@ function renderBrand() {
 }
 
 function renderNavbar(user) {
-  const avatar = escapeHtml(user?.avatar_url || '');
   const name = escapeHtml(user?.name || 'Kullanıcı');
   return `<header class="navbar">
     <div class="nav-inner">
@@ -926,7 +980,13 @@ function renderNavbar(user) {
         user
           ? `<div class="user-menu">
               <button class="user-button" id="userMenuButton" type="button" aria-expanded="false" aria-haspopup="true">
-                <img class="avatar" src="${avatar}" alt="${name}">
+                ${renderAvatarMarkup({
+                  wrapperClass: 'avatar-wrap',
+                  imageClass: 'avatar',
+                  fallbackClass: 'avatar-fallback',
+                  name: user?.name || 'Kullanıcı',
+                  avatarUrl: user?.avatar_url || '',
+                })}
                 <span class="user-name">${name}</span>
                 <i data-lucide="chevron-down"></i>
               </button>
@@ -1097,7 +1157,13 @@ ${renderHead('Profil - SPF Prompt Factory')}
   <main class="shell">
     <section class="profile-header">
       <div class="profile-identity">
-        <img class="profile-avatar" src="${escapeHtml(user.avatar_url || '')}" alt="${escapeHtml(user.name || 'Profil')}">
+        ${renderAvatarMarkup({
+          wrapperClass: 'profile-avatar-wrap',
+          imageClass: 'profile-avatar',
+          fallbackClass: 'profile-avatar-fallback',
+          name: user?.name || 'Profil',
+          avatarUrl: user?.avatar_url || '',
+        })}
         <div>
           <h1 style="font-size:42px">${escapeHtml(user.name || 'Profil')}</h1>
           <p class="profile-email">${escapeHtml(user.email || '')}</p>
