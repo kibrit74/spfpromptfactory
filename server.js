@@ -50,6 +50,27 @@ const supabaseAdmin =
     : null;
 
 const googleOAuthConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const defaultAppUrl = process.env.APP_URL || `http://localhost:${port}`;
+const configuredGoogleCallbackUrl =
+  process.env.GOOGLE_CALLBACK_URL || `${normalizeBaseUrl(defaultAppUrl)}/auth/google/callback`;
+
+function normalizeBaseUrl(value) {
+  return String(value || `http://localhost:${port}`).replace(/\/+$/, '');
+}
+
+function getRequestBaseUrl(req) {
+  const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const forwardedHost = req.get('x-forwarded-host')?.split(',')[0]?.trim();
+  const protocol = forwardedProto || req.protocol || 'http';
+  const host = forwardedHost || req.get('host') || `localhost:${port}`;
+  return normalizeBaseUrl(`${protocol}://${host}`);
+}
+
+function getGoogleCallbackUrl(req) {
+  if (process.env.GOOGLE_CALLBACK_URL) return process.env.GOOGLE_CALLBACK_URL;
+  if (process.env.APP_URL) return `${normalizeBaseUrl(process.env.APP_URL)}/auth/google/callback`;
+  return `${getRequestBaseUrl(req)}/auth/google/callback`;
+}
 
 passport.serializeUser((user, done) => {
   done(null, user);
@@ -65,7 +86,7 @@ if (googleOAuthConfigured) {
       {
         clientID: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL: process.env.GOOGLE_CALLBACK_URL || '/auth/google/callback',
+        callbackURL: configuredGoogleCallbackUrl,
       },
       async (_accessToken, _refreshToken, profile, done) => {
         try {
@@ -699,6 +720,17 @@ function renderStyles() {
       box-shadow: 0 14px 32px rgba(255,255,255,0.08);
     }
     .google-btn:hover { box-shadow: 0 20px 44px rgba(255,255,255,0.14); }
+    .auth-alert {
+      margin-top: 18px;
+      padding: 12px 14px;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: 8px;
+      background: rgba(239, 68, 68, 0.1);
+      color: #fecaca;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
     .terms { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
     .profile-header {
       display: flex;
@@ -895,7 +927,16 @@ function renderNavbarScript() {
   </script>`;
 }
 
-function renderLoginPage() {
+function getLoginErrorMessage(code) {
+  const messages = {
+    missing_config: 'Google giriş ayarları eksik. GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET ve Supabase anahtarlarını .env.local içinde tanımlayın.',
+    oauth_failed: 'Google girişi tamamlanamadı. Redirect URI, client secret ve consent screen ayarlarını kontrol edin.',
+  };
+  return messages[code] || '';
+}
+
+function renderLoginPage(errorCode = '') {
+  const errorMessage = getLoginErrorMessage(errorCode);
   return `<!DOCTYPE html>
 <html lang="tr">
 ${renderHead('Giriş Yap - SPF Prompt Factory')}
@@ -914,6 +955,7 @@ ${renderHead('Giriş Yap - SPF Prompt Factory')}
         </svg>
         Google ile Giriş Yap
       </a>
+      ${errorMessage ? `<div class="auth-alert">${escapeHtml(errorMessage)}</div>` : ''}
       <p class="terms">Giriş yaparak kullanım şartlarını kabul etmiş olursunuz.</p>
     </section>
   </main>
@@ -1218,9 +1260,13 @@ ${renderHead('Profil - SPF Prompt Factory')}
 
 app.get('/auth/google', (req, res, next) => {
   if (!googleOAuthConfigured) {
-    return res.status(500).send('Google OAuth configuration is missing.');
+    return res.redirect('/login?error=missing_config');
   }
-  return passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+  return passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    callbackURL: getGoogleCallbackUrl(req),
+    prompt: 'select_account',
+  })(req, res, next);
 });
 
 app.get('/auth/google/callback', (req, res, next) => {
@@ -1228,8 +1274,9 @@ app.get('/auth/google/callback', (req, res, next) => {
     return res.redirect('/login');
   }
   return passport.authenticate('google', {
+    callbackURL: getGoogleCallbackUrl(req),
     successRedirect: '/app',
-    failureRedirect: '/login',
+    failureRedirect: '/login?error=oauth_failed',
   })(req, res, next);
 });
 
@@ -1240,6 +1287,28 @@ app.get('/auth/logout', (req, res, next) => {
       res.clearCookie('connect.sid');
       res.redirect('/login');
     });
+  });
+});
+
+app.get('/api/auth/session', (req, res) => {
+  res.json({
+    authenticated: req.isAuthenticated(),
+    user: req.isAuthenticated()
+      ? {
+          id: req.user.id,
+          email: req.user.email,
+          name: req.user.name,
+          avatar_url: req.user.avatar_url,
+        }
+      : null,
+  });
+});
+
+app.get('/api/auth/config', (_req, res) => {
+  res.json({
+    googleOAuthConfigured,
+    supabaseConfigured: Boolean(supabaseAdmin),
+    callbackUrl: configuredGoogleCallbackUrl,
   });
 });
 
@@ -1308,7 +1377,7 @@ app.delete('/api/prompts/:id', requireAuth, async (req, res) => {
 
 app.get('/login', (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/app');
-  return res.send(renderLoginPage());
+  return res.send(renderLoginPage(String(req.query.error || '')));
 });
 
 app.get('/', (req, res) => {
