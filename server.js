@@ -10,6 +10,14 @@ import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import {
+  buildAnalysisPrompt,
+  buildRevisionPrompt,
+  buildTaskWithContext,
+  getNextVersionNumber,
+  normalizeAnalysisPayload,
+  parseJsonObject,
+} from './server/prompt-intelligence.js';
 
 dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -18,10 +26,11 @@ const port = Number(process.env.PORT || 8200);
 const FileStore = sessionFileStoreFactory(session);
 const sessionStorePath = path.join(process.cwd(), '.sessions');
 const isDev = process.env.NODE_ENV !== 'production';
+const useFileSessionStore = !isDev || process.env.SESSION_FILE_STORE === 'true';
 const spaTemplatePath = path.join(process.cwd(), 'app.html');
 const spaDistPath = path.join(process.cwd(), 'dist', 'app.html');
 
-if (!fs.existsSync(sessionStorePath)) {
+if (useFileSessionStore && !fs.existsSync(sessionStorePath)) {
   fs.mkdirSync(sessionStorePath, { recursive: true });
 }
 
@@ -32,12 +41,16 @@ app.use(express.urlencoded({ extended: false }));
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'spf-prompt-factory-local-session-secret',
-    store: new FileStore({
-      path: sessionStorePath,
-      ttl: 60 * 60 * 24 * 7,
-      retries: 0,
-      logFn: () => {},
-    }),
+    ...(useFileSessionStore
+      ? {
+          store: new FileStore({
+            path: sessionStorePath,
+            ttl: 60 * 60 * 24 * 7,
+            retries: 0,
+            logFn: () => {},
+          }),
+        }
+      : {}),
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -415,6 +428,14 @@ GENERAL GENERATION RULES:
 10. Never output a filled template inside @output.
 11. Return ONLY the SPF prompt.`;
 
+const ANALYSIS_SYSTEM_PROMPT = `ROLE: You are a senior prompt QA analyst for SPF prompts.
+Return only valid JSON. Do not use markdown. Do not include prose outside JSON.
+Focus on missing context, prompt quality, and practical test cases.`;
+
+const REVISION_SYSTEM_PROMPT = `ROLE: You are an expert SPF prompt editor.
+You revise existing SPF prompts without changing their required section contract.
+Return only the complete revised SPF prompt. No explanation before or after.`;
+
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (char) => {
     const entities = {
@@ -532,7 +553,110 @@ async function fetchUserPrompts(userId) {
   return data || [];
 }
 
-async function savePromptIfPossible(userId, task, prompt) {
+async function fetchUserContextPacks(userId) {
+  if (!userId || !isSupabaseAdminAvailable()) return [];
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('context_packs')
+    .select('id, name, description, content, created_at, updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data || [];
+}
+
+async function fetchUserContextPack(userId, contextPackId) {
+  if (!userId || !contextPackId || !isSupabaseAdminAvailable()) return null;
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('context_packs')
+    .select('id, name, description, content, created_at, updated_at')
+    .eq('id', contextPackId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data || null;
+}
+
+async function fetchPromptForUser(userId, promptId) {
+  if (!userId || !promptId || !isSupabaseAdminAvailable()) return null;
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompts')
+    .select('id, task, generated_prompt, created_at')
+    .eq('id', promptId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data || null;
+}
+
+async function fetchPromptVersionsForUser(userId, promptId) {
+  const prompt = await fetchPromptForUser(userId, promptId);
+  if (!prompt) return null;
+
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompt_versions')
+    .select('id, prompt_id, version_number, generated_prompt, revision_instruction, context_pack_snapshot, missing_context, quality_report, test_package, created_at')
+    .eq('prompt_id', promptId)
+    .order('version_number', { ascending: false });
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+
+  return { prompt, versions: data || [] };
+}
+
+async function createPromptVersion({
+  promptId,
+  versionNumber,
+  generatedPrompt,
+  revisionInstruction = null,
+  contextPack = null,
+  analysis = null,
+}) {
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompt_versions')
+    .insert({
+      prompt_id: promptId,
+      version_number: versionNumber,
+      generated_prompt: generatedPrompt,
+      revision_instruction: revisionInstruction,
+      context_pack_snapshot: contextPack,
+      missing_context: analysis?.missing_context || [],
+      quality_report: {
+        score: analysis?.quality_score ?? null,
+        findings: analysis?.quality_findings || [],
+      },
+      test_package: analysis?.test_cases || [],
+    })
+    .select('id, prompt_id, version_number, generated_prompt, revision_instruction, context_pack_snapshot, missing_context, quality_report, test_package, created_at')
+    .single();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data;
+}
+
+async function savePromptIfPossible(userId, task, prompt, contextPack = null) {
   if (!userId || !isSupabaseAdminAvailable()) return null;
 
   const client = ensureSupabaseAdmin();
@@ -550,7 +674,30 @@ async function savePromptIfPossible(userId, task, prompt) {
     disableSupabaseAdmin(error);
     throw error;
   }
-  return data?.id || null;
+  const promptId = data?.id || null;
+  if (!promptId) return null;
+
+  await createPromptVersion({
+    promptId,
+    versionNumber: 1,
+    generatedPrompt: prompt,
+    contextPack,
+  });
+
+  return promptId;
+}
+
+async function analyzePromptInput(task, contextPack = null) {
+  const ai = getGeminiClient();
+  const response = await ai.models.generateContent({
+    model: getModelName(),
+    contents: buildAnalysisPrompt(task, contextPack),
+    config: {
+      systemInstruction: ANALYSIS_SYSTEM_PROMPT,
+    },
+  });
+
+  return normalizeAnalysisPayload(parseJsonObject(response.text || '{}'));
 }
 
 function getGeminiClient() {
@@ -1599,15 +1746,24 @@ app.get('/api/auth/config', (_req, res) => {
 
 app.post('/api/generate', requireAuth, async (req, res) => {
   try {
-    const { task } = req.body;
+    const { task, context_pack_id: contextPackId } = req.body;
     if (!task || typeof task !== 'string' || !task.trim()) {
       return res.status(400).json({ error: 'Task is required' });
+    }
+
+    await hydrateAuthenticatedUser(req);
+    const contextPack = contextPackId
+      ? await fetchUserContextPack(req.user?.id, contextPackId)
+      : null;
+
+    if (contextPackId && !contextPack) {
+      return res.status(404).json({ error: 'Context pack not found' });
     }
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
       model: getModelName(),
-      contents: task.trim(),
+      contents: buildTaskWithContext(task, contextPack),
       config: {
         systemInstruction: STRUCTURED_SYSTEM_PROMPT,
       },
@@ -1617,8 +1773,7 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     let promptId = null;
 
     try {
-      await hydrateAuthenticatedUser(req);
-      promptId = await savePromptIfPossible(req.user?.id, task.trim(), prompt);
+      promptId = await savePromptIfPossible(req.user?.id, task.trim(), prompt, contextPack);
     } catch (saveError) {
       if (supabaseAdminDisabledReason) {
         return res.json({ prompt, prompt_id: null });
@@ -1631,6 +1786,139 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     }
 
     return res.json({ prompt, prompt_id: promptId });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/prompts/analyze', requireAuth, async (req, res) => {
+  try {
+    const { task, context_pack_id: contextPackId } = req.body;
+    if (!task || typeof task !== 'string' || !task.trim()) {
+      return res.status(400).json({ error: 'Task is required' });
+    }
+
+    await hydrateAuthenticatedUser(req);
+    const contextPack = contextPackId
+      ? await fetchUserContextPack(req.user?.id, contextPackId)
+      : null;
+
+    if (contextPackId && !contextPack) {
+      return res.status(404).json({ error: 'Context pack not found' });
+    }
+
+    const analysis = await analyzePromptInput(task.trim(), contextPack);
+    return res.json({ analysis });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/context-packs', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    const contextPacks = await fetchUserContextPacks(req.user?.id);
+    return res.json({ context_packs: contextPacks });
+  } catch (error) {
+    if (supabaseAdminDisabledReason) {
+      return res.json({ context_packs: [] });
+    }
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/context-packs', requireAuth, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+    const contentInput = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+    const content = contentInput || description;
+
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    if (!content) return res.status(400).json({ error: 'Content is required' });
+
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('context_packs')
+      .insert({
+        user_id: req.user.id,
+        name,
+        description,
+        content,
+      })
+      .select('id, name, description, content, created_at, updated_at')
+      .single();
+
+    if (error) throw error;
+    return res.status(201).json({ context_pack: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.patch('/api/context-packs/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = {};
+    if (typeof req.body?.name === 'string') updates.name = req.body.name.trim();
+    if (typeof req.body?.description === 'string') updates.description = req.body.description.trim();
+    if (typeof req.body?.content === 'string') updates.content = req.body.content.trim();
+    if ('content' in updates && !updates.content && typeof req.body?.description === 'string') {
+      updates.content = req.body.description.trim();
+    }
+
+    if ('name' in updates && !updates.name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    if ('content' in updates && !updates.content) {
+      return res.status(400).json({ error: 'Content is required' });
+    }
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ error: 'No updates provided' });
+    }
+
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('context_packs')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.id)
+      .select('id, name, description, content, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Context pack not found' });
+    return res.json({ context_pack: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.delete('/api/context-packs/:id', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('context_packs')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.id)
+      .select('id')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Context pack not found' });
+    return res.json({ ok: true });
   } catch (error) {
     return handleError(res, error);
   }
@@ -1651,6 +1939,100 @@ app.get('/api/prompts', requireAuth, async (req, res) => {
       status: error?.status,
     });
     return res.json({ prompts: [] });
+  }
+});
+
+app.get('/api/prompts/:id/versions', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(404).json({ error: 'Prompt not found' });
+
+    const result = await fetchPromptVersionsForUser(req.user.id, req.params.id);
+    if (!result) return res.status(404).json({ error: 'Prompt not found' });
+
+    return res.json({ prompt: result.prompt, versions: result.versions });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/prompts/:id/revise', requireAuth, async (req, res) => {
+  try {
+    const revisionInstruction =
+      typeof req.body?.revision_instruction === 'string'
+        ? req.body.revision_instruction.trim()
+        : '';
+    const contextPackId = req.body?.context_pack_id;
+
+    if (!revisionInstruction) {
+      return res.status(400).json({ error: 'Revision instruction is required' });
+    }
+
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(404).json({ error: 'Prompt not found' });
+
+    const prompt = await fetchPromptForUser(req.user.id, req.params.id);
+    if (!prompt) return res.status(404).json({ error: 'Prompt not found' });
+
+    const contextPack = contextPackId
+      ? await fetchUserContextPack(req.user.id, contextPackId)
+      : null;
+    if (contextPackId && !contextPack) {
+      return res.status(404).json({ error: 'Context pack not found' });
+    }
+
+    const ai = getGeminiClient();
+    const response = await ai.models.generateContent({
+      model: getModelName(),
+      contents: buildRevisionPrompt({
+        currentPrompt: prompt.generated_prompt,
+        revisionInstruction,
+        contextPack,
+      }),
+      config: {
+        systemInstruction: REVISION_SYSTEM_PROMPT,
+      },
+    });
+    const revisedPrompt = response.text || '';
+
+    let analysis = null;
+    try {
+      analysis = await analyzePromptInput(
+        `${prompt.task}\n\nSPF PROMPT TO REVIEW:\n${revisedPrompt}`,
+        contextPack,
+      );
+    } catch (analysisError) {
+      console.error('Revision analysis skipped:', {
+        message: analysisError?.message,
+      });
+    }
+
+    const versionResult = await fetchPromptVersionsForUser(req.user.id, req.params.id);
+    const version = await createPromptVersion({
+      promptId: req.params.id,
+      versionNumber: getNextVersionNumber(versionResult?.versions || []),
+      generatedPrompt: revisedPrompt,
+      revisionInstruction,
+      contextPack,
+      analysis,
+    });
+
+    const client = ensureSupabaseAdmin();
+    const { error: updateError } = await client
+      .from('prompts')
+      .update({ generated_prompt: revisedPrompt })
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.id);
+
+    if (updateError) throw updateError;
+
+    return res.json({
+      prompt: revisedPrompt,
+      version,
+      analysis,
+    });
+  } catch (error) {
+    return handleError(res, error);
   }
 });
 

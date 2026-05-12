@@ -10,21 +10,10 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Avatar } from '../components/Avatar';
 import { AppShell } from '../components/AppShell';
-import { deletePrompt, getPrompts } from '../lib/api';
-import type { PromptRecord, SessionUser } from '../lib/types';
-
-function initials(name: string) {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() || '')
-      .join('') || 'SP'
-  );
-}
+import { deletePrompt, getPrompts, getPromptVersions } from '../lib/api';
+import type { PromptRecord, PromptVersion, SessionUser } from '../lib/types';
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('tr-TR', {
@@ -42,6 +31,8 @@ export function ProfilePage({ user }: { user: SessionUser }) {
   const [prompts, setPrompts] = useState<PromptRecord[]>([]);
   const [query, setQuery] = useState('');
   const [activePrompt, setActivePrompt] = useState<PromptRecord | null>(null);
+  const [versions, setVersions] = useState<PromptVersion[]>([]);
+  const [activeVersion, setActiveVersion] = useState<PromptVersion | null>(null);
   const [copyId, setCopyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,6 +40,24 @@ export function ProfilePage({ user }: { user: SessionUser }) {
       .then((result) => setPrompts(result.prompts))
       .catch(() => setPrompts([]));
   }, []);
+
+  useEffect(() => {
+    if (!activePrompt) {
+      setVersions([]);
+      setActiveVersion(null);
+      return;
+    }
+
+    getPromptVersions(activePrompt.id)
+      .then((result) => {
+        setVersions(result.versions);
+        setActiveVersion(result.versions[0] || null);
+      })
+      .catch(() => {
+        setVersions([]);
+        setActiveVersion(null);
+      });
+  }, [activePrompt]);
 
   const filteredPrompts = useMemo(() => {
     const lowered = query.trim().toLowerCase();
@@ -67,7 +76,6 @@ export function ProfilePage({ user }: { user: SessionUser }) {
     return createdAt.getMonth() === currentMonth && createdAt.getFullYear() === currentYear;
   }).length;
   const lastActivity = prompts[0] ? formatDate(prompts[0].created_at) : 'Yok';
-  const avatarFallback = initials(user.name || 'Profil');
 
   async function handleCopyPrompt(prompt: PromptRecord) {
     await navigator.clipboard.writeText(prompt.generated_prompt);
@@ -81,6 +89,8 @@ export function ProfilePage({ user }: { user: SessionUser }) {
       setPrompts((current) => current.filter((prompt) => prompt.id !== id));
       if (activePrompt?.id === id) {
         setActivePrompt(null);
+        setVersions([]);
+        setActiveVersion(null);
       }
     } catch {
       // Keep UI stable; backend already returns guarded responses.
@@ -92,13 +102,13 @@ export function ProfilePage({ user }: { user: SessionUser }) {
       <main className="shell">
         <section className="profile-header">
           <div className="profile-identity">
-            <span className="profile-avatar-wrap">
-              {user.avatar_url ? (
-                <img className="profile-avatar" src={user.avatar_url} alt={user.name} />
-              ) : (
-                <span className="profile-avatar-fallback">{avatarFallback}</span>
-              )}
-            </span>
+            <Avatar
+              name={user.name}
+              avatarUrl={user.avatar_url}
+              wrapperClassName="profile-avatar-wrap"
+              imageClassName="profile-avatar"
+              fallbackClassName="profile-avatar-fallback"
+            />
             <div>
               <h1 className="profile-heading">{user.name}</h1>
               <p className="profile-email">{user.email}</p>
@@ -204,9 +214,42 @@ export function ProfilePage({ user }: { user: SessionUser }) {
                 <X size={16} />
               </button>
             </div>
-            <div className="modal-body">{activePrompt.generated_prompt}</div>
+            <div className="version-layout">
+              <aside className="version-list" aria-label="Prompt versiyonlari">
+                {versions.length ? (
+                  versions.map((version) => (
+                    <button
+                      className={`version-item${activeVersion?.id === version.id ? ' active' : ''}`}
+                      type="button"
+                      key={version.id}
+                      onClick={() => setActiveVersion(version)}
+                    >
+                      <strong>v{version.version_number}</strong>
+                      <span>{formatDate(version.created_at)}</span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="muted">Versiyon gecmisi yok.</p>
+                )}
+              </aside>
+              <div className="modal-body">
+                {activeVersion?.revision_instruction ? (
+                  <p className="version-note">Revizyon: {activeVersion.revision_instruction}</p>
+                ) : null}
+                {activeVersion?.generated_prompt || activePrompt.generated_prompt}
+              </div>
+            </div>
             <div className="modal-actions">
-              <button className="btn btn-primary" type="button" onClick={() => handleCopyPrompt(activePrompt)}>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() =>
+                  handleCopyPrompt({
+                    ...activePrompt,
+                    generated_prompt: activeVersion?.generated_prompt || activePrompt.generated_prompt,
+                  })
+                }
+              >
                 {copyId === activePrompt.id ? <Check size={16} /> : <Copy size={16} />}
                 {copyId === activePrompt.id ? 'Kopyalandı' : 'Kopyala'}
               </button>

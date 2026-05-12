@@ -302,7 +302,9 @@ h2 {
 }
 
 textarea,
-.search-field input {
+.search-field input,
+.text-field,
+.select-field {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -316,6 +318,17 @@ textarea {
   padding: 16px;
   margin-top: 16px;
   line-height: 1.7;
+}
+
+.compact-textarea {
+  min-height: auto;
+}
+
+.text-field,
+.select-field {
+  min-height: 44px;
+  padding: 0 12px;
+  outline: none;
 }
 
 .actions {
@@ -334,6 +347,65 @@ textarea {
 
 .status.error {
   color: var(--error);
+}
+
+.context-builder,
+.revision-box,
+.analysis-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: rgba(124, 58, 237, 0.12);
+  color: #d8b4fe;
+  font-weight: 800;
+}
+
+.score-row strong {
+  color: var(--text-primary);
+  font-size: 20px;
+}
+
+.analysis-section {
+  display: grid;
+  gap: 10px;
+}
+
+.analysis-section h3 {
+  font-size: 16px;
+}
+
+.analysis-section ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #e4e4e7;
+  line-height: 1.7;
+}
+
+.analysis-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-left: 3px solid var(--accent);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.analysis-card p,
+.analysis-card small,
+.muted {
+  color: var(--text-secondary);
+  line-height: 1.6;
 }
 
 .user-menu {
@@ -604,6 +676,50 @@ textarea {
   overflow: hidden;
 }
 
+.version-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.version-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+}
+
+.version-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.version-item.active,
+.version-item:hover {
+  border-color: rgba(124, 58, 237, 0.52);
+  background: rgba(124, 58, 237, 0.14);
+}
+
+.version-item span,
+.version-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.version-note {
+  margin-bottom: 12px;
+}
+
 .modal-head,
 .modal-actions {
   padding: 16px;
@@ -654,6 +770,17 @@ textarea {
   .profile-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .version-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .version-list {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(126px, 1fr);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 
   .login-card {
