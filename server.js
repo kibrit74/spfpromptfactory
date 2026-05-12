@@ -76,33 +76,6 @@ function getGoogleCallbackUrl(req) {
   return `${getRequestBaseUrl(req)}/auth/google/callback`;
 }
 
-function getOAuthErrorCode(error) {
-  if (!error) return 'oauth_failed';
-
-  const rawData =
-    typeof error.data === 'string'
-      ? error.data
-      : typeof error.oauthError?.data === 'string'
-        ? error.oauthError.data
-        : '';
-
-  if (rawData) {
-    try {
-      const parsed = JSON.parse(rawData);
-      return parsed.error || 'oauth_failed';
-    } catch {
-      if (rawData.includes('redirect_uri_mismatch')) return 'redirect_uri_mismatch';
-      if (rawData.includes('invalid_client')) return 'invalid_client';
-      if (rawData.includes('invalid_grant')) return 'invalid_grant';
-    }
-  }
-
-  if (error.message?.includes('redirect_uri_mismatch')) return 'redirect_uri_mismatch';
-  if (error.message?.includes('invalid_client')) return 'invalid_client';
-  if (error.message?.includes('invalid_grant')) return 'invalid_grant';
-  return 'oauth_failed';
-}
-
 function logOAuthError(error) {
   const rawData =
     typeof error?.data === 'string'
@@ -152,14 +125,29 @@ if (googleOAuthConfigured) {
           }
 
           const avatarUrl = profile.photos?.[0]?.value || '';
-          const userRecord = await syncGoogleUser({
+          const googleUser = {
+            id: null,
             google_id: profile.id,
             email,
             name: profile.displayName || email,
             avatar_url: avatarUrl,
-          });
+            db_sync_error: null,
+          };
 
-          return done(null, userRecord);
+          try {
+            const userRecord = await syncGoogleUser(googleUser);
+            return done(null, { ...googleUser, ...userRecord, db_sync_error: null });
+          } catch (syncError) {
+            console.error('Supabase user sync failed after Google login:', {
+              message: syncError?.message,
+              code: syncError?.code,
+              status: syncError?.status,
+            });
+            return done(null, {
+              ...googleUser,
+              db_sync_error: syncError?.message || 'Supabase sync failed',
+            });
+          }
         } catch (error) {
           return done(error);
         }
@@ -401,6 +389,7 @@ async function syncGoogleUser(profileUser) {
 }
 
 async function fetchUserPrompts(userId) {
+  if (!userId) return [];
   const client = ensureSupabaseAdmin();
   const { data, error } = await client
     .from('prompts')
@@ -776,17 +765,6 @@ function renderStyles() {
       box-shadow: 0 14px 32px rgba(255,255,255,0.08);
     }
     .google-btn:hover { box-shadow: 0 20px 44px rgba(255,255,255,0.14); }
-    .auth-alert {
-      margin-top: 18px;
-      padding: 12px 14px;
-      border: 1px solid rgba(239, 68, 68, 0.35);
-      border-radius: 8px;
-      background: rgba(239, 68, 68, 0.1);
-      color: #fecaca;
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1.5;
-    }
     .terms { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
     .profile-header {
       display: flex;
@@ -983,20 +961,7 @@ function renderNavbarScript() {
   </script>`;
 }
 
-function getLoginErrorMessage(code) {
-  const messages = {
-    missing_config: 'Google giriş ayarları eksik. GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET ve Supabase anahtarlarını .env.local içinde tanımlayın.',
-    oauth_failed: 'Google girişi tamamlanamadı. Redirect URI, client secret ve consent screen ayarlarını kontrol edin.',
-    invalid_client: 'Google OAuth client ID veya client secret geçersiz. Google Cloud Console üzerinden aynı Web client için yeni secret oluşturup .env.local içine yazın.',
-    invalid_grant: 'Google OAuth kodu geçersiz veya süresi doldu. Giriş akışını baştan başlatın ve callback URL değerinin birebir aynı olduğundan emin olun.',
-    redirect_uri_mismatch: 'Google OAuth redirect URI uyuşmuyor. Google Console içinde http://localhost:8200/auth/google/callback birebir kayıtlı olmalı.',
-    supabase_failed: 'Google girişi başarılı oldu ancak kullanıcı Supabase veritabanına kaydedilemedi. Supabase service key ve tabloları kontrol edin.',
-  };
-  return messages[code] || '';
-}
-
-function renderLoginPage(errorCode = '') {
-  const errorMessage = getLoginErrorMessage(errorCode);
+function renderLoginPage() {
   return `<!DOCTYPE html>
 <html lang="tr">
 ${renderHead('Giriş Yap - SPF Prompt Factory')}
@@ -1015,7 +980,6 @@ ${renderHead('Giriş Yap - SPF Prompt Factory')}
         </svg>
         Google ile Giriş Yap
       </a>
-      ${errorMessage ? `<div class="auth-alert">${escapeHtml(errorMessage)}</div>` : ''}
       <p class="terms">Giriş yaparak kullanım şartlarını kabul etmiş olursunuz.</p>
     </section>
   </main>
@@ -1338,14 +1302,14 @@ app.get('/auth/google/callback', (req, res, next) => {
   }, (error, user) => {
     if (error) {
       logOAuthError(error);
-      return res.redirect(`/login?error=${encodeURIComponent(getOAuthErrorCode(error))}`);
+      return res.redirect('/login');
     }
     if (!user) {
-      return res.redirect('/login?error=oauth_failed');
+      return res.redirect('/login');
     }
     return req.logIn(user, (loginError) => {
       if (loginError) return next(loginError);
-      return res.redirect('/app');
+      return res.redirect('/profile');
     });
   })(req, res, next);
 });
@@ -1387,6 +1351,11 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     const { task } = req.body;
     if (!task || typeof task !== 'string' || !task.trim()) {
       return res.status(400).json({ error: 'Task is required' });
+    }
+    if (!req.user.id) {
+      return res.status(503).json({
+        error: 'Profil veritabanı henüz senkronize değil. Supabase tablolarını ve service key değerini kontrol edin.',
+      });
     }
 
     const ai = getGeminiClient();
@@ -1446,8 +1415,8 @@ app.delete('/api/prompts/:id', requireAuth, async (req, res) => {
 });
 
 app.get('/login', (req, res) => {
-  if (req.isAuthenticated()) return res.redirect('/app');
-  return res.send(renderLoginPage(String(req.query.error || '')));
+  if (req.isAuthenticated()) return res.redirect('/profile');
+  return res.send(renderLoginPage());
 });
 
 app.get('/', (req, res) => {
