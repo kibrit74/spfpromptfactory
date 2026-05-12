@@ -211,6 +211,44 @@
       gap: 2rem;
       align-items: center;
     }
+    .profile-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.7rem;
+      min-height: 52px;
+      padding: 6px 10px 6px 6px;
+      border-radius: 999px;
+      border: 1px solid #2a2a2a;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+    .profile-cta:hover {
+      background: rgba(255, 255, 255, 0.07);
+      transform: translateY(-1px);
+    }
+    .profile-cta-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      flex-shrink: 0;
+    }
+    .profile-cta-name {
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .profile-cta-chevron {
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
     .nav-links a.nav-link {
       color: var(--text-secondary);
       font-weight: 500;
@@ -999,7 +1037,7 @@
         <a href="#how-it-works" class="nav-link">Nasıl Çalışır</a>
         <a href="#features" class="nav-link">Özellikler</a>
         <a href="#pricing" class="nav-link">Fiyatlandırma</a>
-        <a href="/app" class="btn btn-primary" data-auth-cta="trial">
+        <a href="/app" class="btn btn-primary" data-auth-cta="nav-profile">
           Ücretsiz Dene <i data-lucide="arrow-right" style="width: 18px; height: 18px;"></i>
         </a>
       </div>
@@ -1322,7 +1360,7 @@ Build a premium single-page landing page for SPF.
         <div class="cta-content">
           <h2>Bugün başla, yarın üret.</h2>
           <p>Binlerce prompt mühendisi arasına katılın, projelerinizi hızlandırın.</p>
-          <a href="/app" class="btn btn-primary" data-auth-cta="trial">Ücretsiz Dene</a>
+          <a href="/app" class="btn btn-primary">Ücretsiz Dene</a>
         </div>
       </div>
     </div>
@@ -1387,7 +1425,7 @@ Build a premium single-page landing page for SPF.
     lucide.createIcons();
 
     async function syncAuthCtas() {
-      const ctas = document.querySelectorAll('[data-auth-cta="trial"]');
+      const ctas = document.querySelectorAll('[data-auth-cta="nav-profile"]');
       if (!ctas.length) return;
 
       try {
@@ -1395,11 +1433,16 @@ Build a premium single-page landing page for SPF.
         if (!response.ok) return;
 
         const session = await response.json();
-        if (!session.authenticated) return;
+        if (!session.authenticated || !session.user) return;
 
         ctas.forEach((cta) => {
           cta.href = '/profile';
-          cta.innerHTML = 'Profil <i data-lucide="user" style="width: 18px; height: 18px;"></i>';
+          cta.className = 'profile-cta';
+          cta.innerHTML = `
+            <img class="profile-cta-avatar" src="${session.user.avatar_url || ''}" alt="${session.user.name || 'Profil'}">
+            <span class="profile-cta-name">${session.user.name || 'Profil'}</span>
+            <i data-lucide="chevron-down" class="profile-cta-chevron" style="width: 18px; height: 18px;"></i>
+          `;
         });
         lucide.createIcons();
       } catch {
