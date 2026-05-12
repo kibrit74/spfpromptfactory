@@ -32,6 +32,23 @@ app.use(
 );
 app.use(passport.initialize());
 app.use(passport.session());
+app.use(async (req, _res, next) => {
+  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id) {
+    return next();
+  }
+
+  try {
+    await hydrateAuthenticatedUser(req);
+  } catch (error) {
+    console.error('Deferred Supabase user hydration failed:', {
+      message: error?.message,
+      code: error?.code,
+      status: error?.status,
+    });
+  }
+
+  return next();
+});
 
 app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
   res.status(204).end();
@@ -407,6 +424,21 @@ async function syncGoogleUser(profileUser) {
 
   if (error) throw error;
   return data;
+}
+
+async function hydrateAuthenticatedUser(req) {
+  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id) {
+    return req.user;
+  }
+
+  const userRecord = await syncGoogleUser(req.user);
+  req.user = { ...req.user, ...userRecord, db_sync_error: null };
+
+  if (req.session?.passport) {
+    req.session.passport.user = req.user;
+  }
+
+  return req.user;
 }
 
 async function fetchUserPrompts(userId) {
