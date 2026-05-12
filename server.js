@@ -33,6 +33,10 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
+  res.status(204).end();
+});
+
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
@@ -70,6 +74,58 @@ function getGoogleCallbackUrl(req) {
   if (process.env.GOOGLE_CALLBACK_URL) return process.env.GOOGLE_CALLBACK_URL;
   if (process.env.APP_URL) return `${normalizeBaseUrl(process.env.APP_URL)}/auth/google/callback`;
   return `${getRequestBaseUrl(req)}/auth/google/callback`;
+}
+
+function getOAuthErrorCode(error) {
+  if (!error) return 'oauth_failed';
+
+  const rawData =
+    typeof error.data === 'string'
+      ? error.data
+      : typeof error.oauthError?.data === 'string'
+        ? error.oauthError.data
+        : '';
+
+  if (rawData) {
+    try {
+      const parsed = JSON.parse(rawData);
+      return parsed.error || 'oauth_failed';
+    } catch {
+      if (rawData.includes('redirect_uri_mismatch')) return 'redirect_uri_mismatch';
+      if (rawData.includes('invalid_client')) return 'invalid_client';
+      if (rawData.includes('invalid_grant')) return 'invalid_grant';
+    }
+  }
+
+  if (error.message?.includes('redirect_uri_mismatch')) return 'redirect_uri_mismatch';
+  if (error.message?.includes('invalid_client')) return 'invalid_client';
+  if (error.message?.includes('invalid_grant')) return 'invalid_grant';
+  return 'oauth_failed';
+}
+
+function logOAuthError(error) {
+  const rawData =
+    typeof error?.data === 'string'
+      ? error.data
+      : typeof error?.oauthError?.data === 'string'
+        ? error.oauthError.data
+        : '';
+
+  let details = rawData;
+  if (rawData) {
+    try {
+      details = JSON.stringify(JSON.parse(rawData));
+    } catch {
+      details = rawData;
+    }
+  }
+
+  console.error('Google OAuth callback failed:', {
+    name: error?.name,
+    message: error?.message,
+    statusCode: error?.statusCode || error?.oauthError?.statusCode,
+    details,
+  });
 }
 
 passport.serializeUser((user, done) => {
@@ -931,6 +987,10 @@ function getLoginErrorMessage(code) {
   const messages = {
     missing_config: 'Google giriş ayarları eksik. GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET ve Supabase anahtarlarını .env.local içinde tanımlayın.',
     oauth_failed: 'Google girişi tamamlanamadı. Redirect URI, client secret ve consent screen ayarlarını kontrol edin.',
+    invalid_client: 'Google OAuth client ID veya client secret geçersiz. Google Cloud Console üzerinden aynı Web client için yeni secret oluşturup .env.local içine yazın.',
+    invalid_grant: 'Google OAuth kodu geçersiz veya süresi doldu. Giriş akışını baştan başlatın ve callback URL değerinin birebir aynı olduğundan emin olun.',
+    redirect_uri_mismatch: 'Google OAuth redirect URI uyuşmuyor. Google Console içinde http://localhost:8200/auth/google/callback birebir kayıtlı olmalı.',
+    supabase_failed: 'Google girişi başarılı oldu ancak kullanıcı Supabase veritabanına kaydedilemedi. Supabase service key ve tabloları kontrol edin.',
   };
   return messages[code] || '';
 }
@@ -1275,8 +1335,18 @@ app.get('/auth/google/callback', (req, res, next) => {
   }
   return passport.authenticate('google', {
     callbackURL: getGoogleCallbackUrl(req),
-    successRedirect: '/app',
-    failureRedirect: '/login?error=oauth_failed',
+  }, (error, user) => {
+    if (error) {
+      logOAuthError(error);
+      return res.redirect(`/login?error=${encodeURIComponent(getOAuthErrorCode(error))}`);
+    }
+    if (!user) {
+      return res.redirect('/login?error=oauth_failed');
+    }
+    return req.logIn(user, (loginError) => {
+      if (loginError) return next(loginError);
+      return res.redirect('/app');
+    });
   })(req, res, next);
 });
 
