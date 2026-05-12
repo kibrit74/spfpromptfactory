@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
@@ -14,7 +15,7 @@ dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 const app = express();
 const port = Number(process.env.PORT || 8200);
 const FileStore = sessionFileStoreFactory(session);
-const sessionStorePath = `${process.cwd()}\.sessions`;
+const sessionStorePath = path.join(process.cwd(), '.sessions');
 
 if (!fs.existsSync(sessionStorePath)) {
   fs.mkdirSync(sessionStorePath, { recursive: true });
@@ -69,6 +70,7 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+let supabaseAdminDisabledReason = null;
 const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 const supabase = supabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
@@ -415,7 +417,16 @@ function ensureSupabaseAdmin() {
   if (!supabaseAdmin) {
     throw Object.assign(new Error('Supabase configuration is missing.'), { status: 500 });
   }
+  if (supabaseAdminDisabledReason) {
+    throw Object.assign(new Error(supabaseAdminDisabledReason), { status: 503 });
+  }
   return supabaseAdmin;
+}
+
+function disableSupabaseAdmin(error) {
+  const message = error?.message || '';
+  if (!message.includes('Invalid API key')) return;
+  supabaseAdminDisabledReason = 'Supabase service key is invalid.';
 }
 
 async function syncGoogleUser(profileUser) {
@@ -434,7 +445,10 @@ async function syncGoogleUser(profileUser) {
     .select('id, google_id, email, name, avatar_url, last_login')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
   return data;
 }
 
@@ -463,7 +477,10 @@ async function fetchUserPrompts(userId) {
     .order('created_at', { ascending: false })
     .limit(50);
 
-  if (error) throw error;
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
   return data || [];
 }
 
@@ -481,7 +498,10 @@ async function savePromptIfPossible(userId, task, prompt) {
     .select('id')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
   return data?.id || null;
 }
 
@@ -540,7 +560,7 @@ function hasGeminiRuntimeConfig() {
   const hasCredentialFile = credentialsPath ? fs.existsSync(credentialsPath) : false;
   const hasProject = Boolean(process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_PROJECT_ID);
 
-  return apiKey || (hasCredentialFile && hasProject);
+  return apiKey || hasProject || hasCredentialFile;
 }
 
 function getModelName() {
