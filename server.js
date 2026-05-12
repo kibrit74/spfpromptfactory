@@ -455,6 +455,24 @@ async function fetchUserPrompts(userId) {
   return data || [];
 }
 
+async function savePromptIfPossible(userId, task, prompt) {
+  if (!userId) return null;
+
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompts')
+    .insert({
+      user_id: userId,
+      task,
+      generated_prompt: prompt,
+    })
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return data?.id || null;
+}
+
 function getGeminiClient() {
   if (process.env.GEMINI_API_KEY) {
     return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -1450,11 +1468,6 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     if (!task || typeof task !== 'string' || !task.trim()) {
       return res.status(400).json({ error: 'Task is required' });
     }
-    if (!req.user.id) {
-      return res.status(503).json({
-        error: 'Profil veritabanı henüz senkronize değil. Supabase tablolarını ve service key değerini kontrol edin.',
-      });
-    }
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
@@ -1466,19 +1479,20 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     });
 
     const prompt = response.text || '';
-    const client = ensureSupabaseAdmin();
-    const { data, error } = await client
-      .from('prompts')
-      .insert({
-        user_id: req.user.id,
-        task: task.trim(),
-        generated_prompt: prompt,
-      })
-      .select('id')
-      .single();
+    let promptId = null;
 
-    if (error) throw error;
-    return res.json({ prompt, prompt_id: data.id });
+    try {
+      await hydrateAuthenticatedUser(req);
+      promptId = await savePromptIfPossible(req.user?.id, task.trim(), prompt);
+    } catch (saveError) {
+      console.error('Prompt save skipped:', {
+        message: saveError?.message,
+        code: saveError?.code,
+        status: saveError?.status,
+      });
+    }
+
+    return res.json({ prompt, prompt_id: promptId });
   } catch (error) {
     return handleError(res, error);
   }
@@ -1486,15 +1500,25 @@ app.post('/api/generate', requireAuth, async (req, res) => {
 
 app.get('/api/prompts', requireAuth, async (req, res) => {
   try {
+    await hydrateAuthenticatedUser(req);
     const prompts = await fetchUserPrompts(req.user.id);
     return res.json({ prompts });
   } catch (error) {
-    return handleError(res, error);
+    console.error('Prompt list could not be loaded:', {
+      message: error?.message,
+      code: error?.code,
+      status: error?.status,
+    });
+    return res.json({ prompts: [] });
   }
 });
 
 app.delete('/api/prompts/:id', requireAuth, async (req, res) => {
   try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) {
+      return res.status(404).json({ error: 'Prompt not found' });
+    }
     const client = ensureSupabaseAdmin();
     const { data, error } = await client
       .from('prompts')
@@ -1531,10 +1555,16 @@ app.get('/app', requireAuth, (req, res) => {
 
 app.get('/profile', requireAuth, async (req, res) => {
   try {
+    await hydrateAuthenticatedUser(req);
     const prompts = await fetchUserPrompts(req.user.id);
     res.send(renderProfilePage(req.user, prompts));
   } catch (error) {
-    res.status(error.status || 500).send(escapeHtml(error.message || 'Profile could not be loaded.'));
+    console.error('Profile page fallback rendered:', {
+      message: error?.message,
+      code: error?.code,
+      status: error?.status,
+    });
+    res.send(renderProfilePage(req.user, []));
   }
 });
 
