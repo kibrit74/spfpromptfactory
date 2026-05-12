@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPF Prompt Factory | Derdini anlat, model talimatını al.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --surface2: #1a1a1a;
+      --border: #222222;
+      --accent: #8B5CF6;
+      --accent-hover: #7C3AED;
+      --accent-glow: rgba(139, 92, 246, 0.15);
+      --text-primary: #f0f0f0;
+      --text-secondary: #888888;
+      --success: #22C55E;
+      
+      --radius-card: 12px;
+      --radius-btn: 8px;
+      --radius-input: 6px;
+      
+      --transition: all 0.2s ease;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      cursor: none; /* Hide default cursor on desktop, managed by JS */
+    }
+
+    @media (hover: none) and (pointer: coarse) {
+      * {
+        cursor: auto !important;
+      }
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-primary);
+      font-family: 'Inter', sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 300;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+      transition: var(--transition);
+    }
+
+    /* Typography Scale */
+    .heading-hero { font-size: clamp(40px, 6vw, 72px); font-weight: 800; }
+    .heading-section { font-size: clamp(32px, 5vw, 48px); font-weight: 800; }
+    .heading-card { font-size: clamp(24px, 4vw, 32px); }
+
+    /* Custom Cursor */
+    .custom-cursor {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 12px;
+      height: 12px;
+      background-color: var(--accent);
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      transition: transform 0.1s ease-out, background-color 0.2s ease, width 0.2s ease, height 0.2s ease;
+      box-shadow: 0 0 10px var(--accent);
+    }
+    .custom-cursor.hover {
+      transform: translate(-50%, -50%) scale(1.5);
+      background-color: #fff;
+      box-shadow: 0 0 15px #fff;
+    }
+
+    @media (hover: none) and (pointer: coarse) {
+      .custom-cursor {
+        display: none;
+      }
+      body {
+        cursor: auto;
+      }
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.8rem 1.5rem;
+      border-radius: var(--radius-btn);
+      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+      transition: var(--transition);
+      border: 1px solid transparent;
+      outline: none;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .btn-primary {
+      background-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--accent-hover);
+      transform: translateY(-2px);
+    }
+
+    .btn-primary::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 50%;
+      height: 100%;
+      background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+      transition: all 0.5s;
+    }
+    .btn-primary:hover::after {
+      left: 100%;
+    }
+
+    .btn-ghost {
+      background-color: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+      background-color: var(--surface2);
+    }
+
+    /* Container */
+    .container {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    /* SECTION 1: Navbar */
+    .navbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      padding: 1rem 0;
+      z-index: 1000;
+      transition: transform 0.3s ease, background-color 0.3s ease, backdrop-filter 0.3s ease;
+      border-bottom: 1px solid transparent;
+    }
+    .navbar.scrolled {
+      background-color: rgba(10, 10, 10, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom-color: var(--border);
+    }
+    .navbar.hidden-scroll {
+      transform: translateY(-100%);
+    }
+    .nav-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .logo span {
+      color: var(--accent);
+    }
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+    }
+    .nav-links a.nav-link {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .nav-links a.nav-link:hover, .nav-links a.nav-link.active {
+      color: var(--text-primary);
+    }
+    .mobile-menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      padding: 0.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100%;
+        background-color: var(--surface);
+        flex-direction: column;
+        padding: 1rem;
+        border-bottom: 1px solid var(--border);
+        gap: 1rem;
+      }
+      .nav-links.active {
+        display: flex;
+      }
+      .mobile-menu-btn {
+        display: block;
+      }
+      .nav-links .btn {
+        width: 100%;
+      }
+    }
+
+    /* SECTION 2: Hero */
+    .hero {
+      position: relative;
+      padding-top: 150px;
+      padding-bottom: 80px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .hero-bg {
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 50% 50%, var(--accent-glow) 0%, transparent 40%),
+                  radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.1) 0%, transparent 30%);
+      z-index: -1;
+      animation: rotate-bg 20s linear infinite;
+    }
+
+    @keyframes rotate-bg {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .hero-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+
+    @media (max-width: 992px) {
+      .hero-content {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+    }
+
+    .hero-text-area {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 99px;
+      background-color: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      font-weight: 500;
+      width: fit-content;
+    }
+
+    .hero-text-area .badge {
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 992px) {
+      .hero-text-area .badge {
+        margin: 0 auto 1rem auto;
+      }
+    }
+
+    .hero-subtitle {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      max-width: 90%;
+    }
+
+    @media (max-width: 992px) {
+      .hero-subtitle {
+        margin: 0 auto;
+      }
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    @media (max-width: 992px) {
+      .hero-actions {
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 2rem;
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 992px) {
+      .hero-stats {
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      font-family: 'Syne', sans-serif;
+    }
+
+    .stat-label {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+    }
+
+    /* Mockup */
+    .mockup-wrapper {
+      position: relative;
+      animation: float 6s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0% { transform: translateY(0); }
+      50% { transform: translateY(-15px); }
+      100% { transform: translateY(0); }
+    }
+
+    .mockup {
+      background-color: #050505;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-card);
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.05);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mockup-header {
+      background-color: var(--surface);
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .mockup-dots {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .mockup-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background-color: var(--border);
+    }
+    .mockup-dot:nth-child(1) { background-color: #ff5f56; }
+    .mockup-dot:nth-child(2) { background-color: #ffbd2e; }
+    .mockup-dot:nth-child(3) { background-color: #27c93f; }
+
+    .mockup-url {
+      flex: 1;
+      background-color: var(--bg);
+      border-radius: 4px;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-align: center;
+      margin: 0 1rem;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .mockup-body {
+      padding: 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+
+    .mockup-input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .mockup-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .mockup-textarea {
+      background-color: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-input);
+      padding: 0.75rem;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      font-family: 'Inter', sans-serif;
+      min-height: 80px;
+      resize: none;
+    }
+
+    .mockup-tab {
+      background: var(--surface2);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.85rem;
+      font-family: 'Outfit', sans-serif;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: var(--transition);
+      outline: none;
+    }
+    .mockup-tab:hover {
+      background: var(--border);
+      color: var(--text-primary);
+    }
+    .mockup-tab.active {
+      background: var(--accent-glow);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .mockup-output {
+      background-color: #000;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-input);
+      padding: 0.75rem;
+      color: #a3a3a3;
+      font-size: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      min-height: 120px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .mockup-output::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 40px;
+      background: linear-gradient(transparent, #000);
+    }
+
+    /* Scroll Reveal Animation */
+    .reveal {
+      opacity: 0;
+      transform: translateY(40px);
+      transition: all 0.5s ease-out;
+    }
+    .reveal.active {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Page load animation for hero text */
+    .hero-anim {
+      opacity: 0;
+      transform: translateY(20px);
+      animation: fadeUp 0.6s ease-out forwards;
+    }
+    
+    @keyframes fadeUp {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .hero-anim:nth-child(1) { animation-delay: 0.1s; }
+    .hero-anim:nth-child(2) { animation-delay: 0.2s; }
+    .hero-anim:nth-child(3) { animation-delay: 0.3s; }
+    .hero-anim:nth-child(4) { animation-delay: 0.4s; }
+    .hero-anim:nth-child(5) { animation-delay: 0.5s; }
+
+    /* SECTION 3: Nasıl Çalışır */
+    .section {
+      padding: 100px 0;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 4rem;
+    }
+    .section-header p {
+      color: var(--text-secondary);
+      margin-top: 1rem;
+      font-size: 1.125rem;
+    }
+
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+      position: relative;
+    }
+
+    @media (max-width: 768px) {
+      .steps-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .steps-line {
+      position: absolute;
+      top: 40px;
+      left: 15%;
+      right: 15%;
+      height: 2px;
+      background-color: var(--border);
+      z-index: 0;
+    }
+
+    @media (max-width: 768px) {
+      .steps-line {
+        display: none;
+      }
+    }
+
+    .step-card {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-card);
+      padding: 2rem;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+      transition: var(--transition);
+    }
+
+    .step-card:hover {
+      border-color: var(--text-secondary);
+      transform: translateY(-4px);
+    }
+
+    .step-icon {
+      width: 80px;
+      height: 80px;
+      background-color: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.5rem;
+      color: var(--accent);
+      transition: var(--transition);
+    }
+
+    .step-card:hover .step-icon {
+      background-color: var(--surface2);
+      transform: scale(1.1);
+    }
+
+    .step-card h3 {
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .step-card p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* SECTION 4: Özellikler */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+    }
+
+    @media (max-width: 992px) {
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 768px) {
+      .features-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .feature-card {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-card);
+      padding: 2rem;
+      transition: var(--transition);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 0 1px var(--accent);
+      border-color: var(--accent);
+    }
+
+    .feature-icon-wrapper {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background-color: var(--surface2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.25rem;
+    }
+
+    .feature-card p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* SECTION 5: Mockup Detay */
+    .mockup-detail {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+
+    @media (max-width: 992px) {
+      .mockup-detail {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .feature-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .feature-list-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .feature-list-item .icon {
+      color: var(--success);
+      flex-shrink: 0;
+      margin-top: 0.25rem;
+    }
+
+    .feature-list-item div h4 {
+      font-size: 1.125rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .feature-list-item div p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* SECTION 6: Fiyatlandırma */
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+      align-items: stretch;
+    }
+
+    @media (max-width: 992px) {
+      .pricing-grid {
+        grid-template-columns: 1fr;
+        max-width: 400px;
+        margin: 0 auto;
+      }
+    }
+
+    .pricing-card {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-card);
+      padding: 2.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: var(--transition);
+    }
+
+    .pricing-card.popular {
+      border-color: var(--accent);
+      background-color: var(--surface2);
+      transform: scale(1.05);
+      z-index: 1;
+    }
+
+    @media (max-width: 992px) {
+      .pricing-card.popular {
+        transform: scale(1);
+      }
+    }
+
+    .popular-badge {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: var(--accent);
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.25rem 0.75rem;
+      border-radius: 99px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .pricing-header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .pricing-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 0.5rem;
+    }
+
+    .pricing-card.popular .pricing-title {
+      color: var(--accent);
+    }
+
+    .pricing-price {
+      font-size: 2.5rem;
+      font-weight: 800;
+      font-family: 'Syne', sans-serif;
+    }
+
+    .pricing-period {
+      font-size: 1rem;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .pricing-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      flex: 1;
+    }
+
+    .pricing-features li {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+    }
+
+    .pricing-features li i.check {
+      color: var(--success);
+      width: 18px;
+      height: 18px;
+    }
+
+    .pricing-card .btn {
+      width: 100%;
+    }
+
+    /* SECTION 7: CTA Banner */
+    .cta-banner {
+      background: linear-gradient(135deg, var(--surface) 0%, #0c1938 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-card);
+      padding: 4rem 2rem;
+      text-align: center;
+      margin-bottom: 100px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-banner::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
+      z-index: 0;
+    }
+
+    .cta-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .cta-content h2 {
+      font-size: clamp(32px, 5vw, 48px);
+    }
+
+    .cta-content p {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      max-width: 600px;
+    }
+
+    /* SECTION 8: Footer */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 4rem 0 2rem;
+      background-color: var(--surface);
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 2rem;
+      margin-bottom: 4rem;
+    }
+
+    @media (max-width: 768px) {
+      .footer-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+      .footer-brand {
+        grid-column: span 2;
+      }
+    }
+
+    .footer-brand p {
+      color: var(--text-secondary);
+      margin-top: 1rem;
+      font-size: 0.95rem;
+      max-width: 300px;
+    }
+
+    .footer-title {
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      color: var(--text-primary);
+    }
+
+    .footer-links {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .footer-links a {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    .footer-links a:hover {
+      color: var(--accent);
+    }
+
+    .footer-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+    }
+
+    @media (max-width: 768px) {
+      .footer-bottom {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+      }
+    }
+
+    .social-links {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .social-links a {
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background-color: var(--surface2);
+      transition: var(--transition);
+    }
+
+    .social-links a:hover {
+      color: var(--text-primary);
+      background-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+  </style>
+</head>
+<body>
+
+  <!-- Custom Cursor -->
+  <div class="custom-cursor" id="customCursor"></div>
+
+  <!-- SECTION 1: Navbar -->
+  <nav class="navbar" id="navbar">
+    <div class="container nav-container">
+      <a href="#" class="logo">
+        <svg width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#8B5CF6" />
+              <stop offset="100%" stop-color="#3B82F6" />
+            </linearGradient>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+              <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          <rect x="2" y="2" width="36" height="36" rx="10" fill="#0A0A0A" stroke="#2A2A2A" stroke-width="2"/>
+          <path d="M12 14L18 20L12 26" stroke="url(#logo-grad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M21 26H28" stroke="url(#logo-grad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="26" cy="14" r="3" fill="#8B5CF6" filter="url(#glow)"/>
+        </svg>
+        <span>SPF</span> Prompt Factory
+      </a>
+      <div class="nav-links" id="navLinks">
+        <a href="#how-it-works" class="nav-link">Nasıl Çalışır</a>
+        <a href="#features" class="nav-link">Özellikler</a>
+        <a href="#pricing" class="nav-link">Fiyatlandırma</a>
+        <a href="/app" class="btn btn-primary">
+          Ücretsiz Dene <i data-lucide="arrow-right" style="width: 18px; height: 18px;"></i>
+        </a>
+      </div>
+      <button class="mobile-menu-btn" id="mobileMenuBtn">
+        <i data-lucide="menu"></i>
+      </button>
+    </div>
+  </nav>
+
+  <!-- SECTION 2: Hero -->
+  <header class="hero">
+    <div class="hero-bg"></div>
+    <div class="container hero-content">
+      <div class="hero-text-area">
+        <div class="badge hero-anim">
+          <i data-lucide="zap" style="width: 16px; height: 16px; color: var(--accent);"></i>
+          AI-Powered Prompt Engineering
+        </div>
+        <h1 class="heading-hero hero-anim">
+          Derdini anlat,<br>model talimatını al.
+        </h1>
+        <p class="hero-subtitle hero-anim">
+          SPF Prompt Factory, görevinizi analiz eder — doğru skill'leri seçer, validator'ları ekler, nokta atışı prompt üretir. Claude, Gemini, Codex — model fark etmez.
+        </p>
+        <div class="hero-actions hero-anim">
+          <a href="/app" class="btn btn-primary">Hemen Başla</a>
+          <a href="#how-it-works" class="btn btn-ghost">Nasıl Çalışır</a>
+        </div>
+        
+        <div class="hero-stats hero-anim">
+          <div class="stat-item">
+            <span class="stat-value counter" data-target="500">0</span>
+            <span class="stat-label">Prompt Üretildi</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value counter" data-target="20">0</span>
+            <span class="stat-label">Skill Kategorisi</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value"><span class="counter" data-target="94">0</span>%</span>
+            <span class="stat-label">Başarı Oranı</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-mockup-area hero-anim">
+        <div class="mockup-wrapper">
+          <div class="mockup">
+            <div class="mockup-header">
+              <div class="mockup-dots">
+                <div class="mockup-dot"></div>
+                <div class="mockup-dot"></div>
+                <div class="mockup-dot"></div>
+              </div>
+              <div class="mockup-url">spf-factory.com/app</div>
+            </div>
+            <div class="mockup-tabs" style="display: flex; gap: 0.5rem; padding: 1rem 1.5rem 0 1.5rem;">
+              <button class="mockup-tab active" onclick="changeMockup(0)">Web UI</button>
+              <button class="mockup-tab" onclick="changeMockup(1)">Backend</button>
+              <button class="mockup-tab" onclick="changeMockup(2)">Database</button>
+            </div>
+            <div class="mockup-body">
+              <div class="mockup-input-group">
+                <span class="mockup-label">Görev</span>
+                <div class="mockup-textarea" id="mockupTask">Premium bir hukuk bürosu landing page yap, WhatsApp butonu olsun</div>
+              </div>
+              <div class="mockup-input-group">
+                <span class="mockup-label">SPF Prompt Çıktısı</span>
+                <div class="mockup-output" id="mockupOutput">@model
+You are an expert web developer specializing in legal tech.
+
+@context
+Task: Build a premium law firm landing page with a WhatsApp integration.
+
+@skills
+SKILL: legal-landing-page
+SKILL: whatsapp-widget...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- SECTION 3: Nasıl Çalışır -->
+  <section id="how-it-works" class="section">
+    <div class="container">
+      <div class="section-header reveal">
+        <h2 class="heading-section">Nasıl Çalışır?</h2>
+        <p>Sadece 3 adımda mükemmel promptu elde edin.</p>
+      </div>
+
+      <div class="steps-grid reveal">
+        <div class="steps-line"></div>
+        
+        <div class="step-card">
+          <div class="step-icon">
+            <i data-lucide="pencil" style="width: 32px; height: 32px;"></i>
+          </div>
+          <h3>Görevini Yaz</h3>
+          <p>Ne yapmak istediğini düz Türkçe veya İngilizce ile anlat.</p>
+        </div>
+
+        <div class="step-card">
+          <div class="step-icon">
+            <i data-lucide="cpu" style="width: 32px; height: 32px;"></i>
+          </div>
+          <h3>Sistem Analiz Eder</h3>
+          <p>Router görevini parse eder, skill registry'den doğru araçları seçer, validator'ları ekler.</p>
+        </div>
+
+        <div class="step-card">
+          <div class="step-icon">
+            <i data-lucide="clipboard-copy" style="width: 32px; height: 32px;"></i>
+          </div>
+          <h3>Promptu Kopyala</h3>
+          <p>Üretilen SPF promptu kopyala, istediğin modele yapıştır. Claude, Gemini, Codex — hepsi çalışır.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: Özellikler -->
+  <section id="features" class="section">
+    <div class="container">
+      <div class="section-header reveal">
+        <h2 class="heading-section">Gelişmiş Özellikler</h2>
+        <p>Prompt mühendisliğini manuel bir süreçten mühendislik disiplinine dönüştürdük.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card reveal">
+          <div class="feature-icon-wrapper">
+            <i data-lucide="brain"></i>
+          </div>
+          <h3>Akıllı Router</h3>
+          <p>Görevinizi analiz eder, teknoloji etiketlerini çıkarır, doğru skill kombinasyonunu seçer.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon-wrapper">
+            <i data-lucide="layers"></i>
+          </div>
+          <h3>Skill Registry</h3>
+          <p>20+ kategoride yüzlerce skill ve MCP. Python, hukuk, Excel, PDF, landing page ve daha fazlası.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon-wrapper">
+            <i data-lucide="shield-check"></i>
+          </div>
+          <h3>Validator Sistemi</h3>
+          <p>Her prompt kendi kendini denetler. Validator başarısız olursa sistem otomatik düzeltir.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon-wrapper">
+            <i data-lucide="copy"></i>
+          </div>
+          <h3>Model Agnostik</h3>
+          <p>Üretilen prompt Claude'da da çalışır, Gemini'de de, Codex'te de. Vendor lock-in yok.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon-wrapper">
+            <i data-lucide="globe"></i>
+          </div>
+          <h3>Türkçe + İngilizce</h3>
+          <p>Görevinizi Türkçe veya İngilizce yazın, sistem otomatik algılar ve işler.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon-wrapper">
+            <i data-lucide="code-2"></i>
+          </div>
+          <h3>Failure Policy</h3>
+          <p>Model yanıt vermezse veya validator başarısız olursa sistem otomatik yeniden dener.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5: Mockup Detay -->
+  <section class="section">
+    <div class="container">
+      <div class="mockup-detail">
+        <div class="reveal">
+          <h2 class="heading-section">Bir araç.<br>Sonsuz model.</h2>
+          <div class="feature-list">
+            <div class="feature-list-item">
+              <i data-lucide="check-circle-2" class="icon"></i>
+              <div>
+                <h4>Anında Üretim</h4>
+                <p>Saniyeler içinde karmaşık mühendislik promptları oluşur.</p>
+              </div>
+            </div>
+            <div class="feature-list-item">
+              <i data-lucide="check-circle-2" class="icon"></i>
+              <div>
+                <h4>Yüksek Tutarlılık</h4>
+                <p>Aynı kalitede, standartlaştırılmış framework formatında çıktılar.</p>
+              </div>
+            </div>
+            <div class="feature-list-item">
+              <i data-lucide="check-circle-2" class="icon"></i>
+              <div>
+                <h4>Developer Dostu</h4>
+                <p>Okunabilir, versiyonlanabilir ve düzenlenebilir düz metin promptlar.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mockup-wrapper reveal">
+          <div class="mockup" style="transform: scale(1.05);">
+            <div class="mockup-header">
+              <div class="mockup-dots">
+                <div class="mockup-dot"></div>
+                <div class="mockup-dot"></div>
+                <div class="mockup-dot"></div>
+              </div>
+            </div>
+            <div class="mockup-body">
+              <div class="mockup-output" style="min-height: 300px; padding: 1.5rem; font-size: 0.85rem; color: #a3a3a3;">
+<span style="color:#c678dd;">@model</span>
+You are a senior frontend developer and UI/UX designer.
+
+<span style="color:#c678dd;">@context</span>
+Product: SPF Prompt Factory
+Tagline: "Derdini anlat, model talimatını al."
+
+<span style="color:#c678dd;">@skills</span>
+SKILL: icon-system
+SKILL: typography
+SKILL: animation-system
+
+<span style="color:#c678dd;">@task</span>
+Build a premium single-page landing page for SPF.
+
+<span style="color:#c678dd;">@validators</span>
+- lucide_icons_used == true
+- mobile_responsive == true
+- no_css_frameworks == true
+
+<span style="color:#c678dd;">@failure_policy</span>
+- Fix validators before returning.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 6: Fiyatlandırma -->
+  <section id="pricing" class="section">
+    <div class="container">
+      <div class="section-header reveal">
+        <h2 class="heading-section">Fiyatlandırma</h2>
+        <p>Her ihtiyaca uygun esnek planlar.</p>
+      </div>
+
+      <div class="pricing-grid">
+        <!-- Starter -->
+        <div class="pricing-card reveal">
+          <div class="pricing-header">
+            <h3 class="pricing-title">Starter</h3>
+            <div class="pricing-price">Ücretsiz</div>
+            <div class="pricing-period">Süresiz, kredi kartı gerekmez</div>
+          </div>
+          <ul class="pricing-features">
+            <li><i data-lucide="check" class="check"></i> 10 prompt / gün</li>
+            <li><i data-lucide="check" class="check"></i> Temel skill registry</li>
+            <li><i data-lucide="check" class="check"></i> Topluluk desteği</li>
+          </ul>
+          <a href="/app" class="btn btn-ghost">Hemen Başla</a>
+        </div>
+
+        <!-- Pro -->
+        <div class="pricing-card popular reveal">
+          <div class="popular-badge">En Popüler</div>
+          <div class="pricing-header">
+            <h3 class="pricing-title">Pro</h3>
+            <div class="pricing-price">$19</div>
+            <div class="pricing-period">Aylık faturalandırılır</div>
+          </div>
+          <ul class="pricing-features">
+            <li><i data-lucide="check" class="check"></i> Sınırsız prompt</li>
+            <li><i data-lucide="check" class="check"></i> Tam skill registry</li>
+            <li><i data-lucide="check" class="check"></i> Özel validator'lar</li>
+            <li><i data-lucide="check" class="check"></i> Öncelikli destek</li>
+          </ul>
+          <a href="/app" class="btn btn-primary">Pro'ya Geç</a>
+        </div>
+
+        <!-- Enterprise -->
+        <div class="pricing-card reveal">
+          <div class="pricing-header">
+            <h3 class="pricing-title">Enterprise</h3>
+            <div class="pricing-price">$99</div>
+            <div class="pricing-period">Aylık faturalandırılır</div>
+          </div>
+          <ul class="pricing-features">
+            <li><i data-lucide="check" class="check"></i> API erişimi</li>
+            <li><i data-lucide="check" class="check"></i> Özel skill ekleme</li>
+            <li><i data-lucide="check" class="check"></i> SLA garantisi</li>
+            <li><i data-lucide="check" class="check"></i> Dedike destek</li>
+          </ul>
+          <a href="#" class="btn btn-ghost">Bize Ulaşın</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 7: CTA Banner -->
+  <section class="section">
+    <div class="container reveal">
+      <div class="cta-banner">
+        <div class="cta-content">
+          <h2>Bugün başla, yarın üret.</h2>
+          <p>Binlerce prompt mühendisi arasına katılın, projelerinizi hızlandırın.</p>
+          <a href="/app" class="btn btn-primary">Ücretsiz Dene</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 8: Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a href="#" class="logo">
+            <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="logo-grad-ft" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#8B5CF6" />
+                  <stop offset="100%" stop-color="#3B82F6" />
+                </linearGradient>
+                <filter id="glow-ft">
+                  <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                  <feMerge>
+                    <feMergeNode in="coloredBlur"/>
+                    <feMergeNode in="SourceGraphic"/>
+                  </feMerge>
+                </filter>
+              </defs>
+              <rect x="2" y="2" width="36" height="36" rx="10" fill="#0A0A0A" stroke="#2A2A2A" stroke-width="2"/>
+              <path d="M12 14L18 20L12 26" stroke="url(#logo-grad-ft)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M21 26H28" stroke="url(#logo-grad-ft)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="26" cy="14" r="3" fill="#8B5CF6" filter="url(#glow-ft)"/>
+            </svg>
+            <span>SPF</span> Prompt Factory
+          </a>
+          <p>Derdini anlat, model talimatını al. Yapay zeka ile kod üretim sürecini hızlandırın.</p>
+        </div>
+        
+        <div>
+          <h4 class="footer-title">Ürün</h4>
+          <ul class="footer-links">
+            <li><a href="#features">Özellikler</a></li>
+            <li><a href="#how-it-works">Nasıl Çalışır</a></li>
+            <li><a href="#pricing">Fiyatlandırma</a></li>
+            <li><a href="#">API</a></li>
+          </ul>
+        </div>
+        
+        <div>
+          <h4 class="footer-title">Şirket</h4>
+          <ul class="footer-links">
+            <li><a href="#">Hakkımızda</a></li>
+            <li><a href="#">Blog</a></li>
+            <li><a href="#">Kariyer</a></li>
+            <li><a href="#">İletişim</a></li>
+          </ul>
+        </div>
+        
+        <div>
+          <h4 class="footer-title">Destek</h4>
+          <ul class="footer-links">
+            <li><a href="#">Yardım Merkezi</a></li>
+            <li><a href="#">Topluluk</a></li>
+            <li><a href="#">Dokümantasyon</a></li>
+            <li><a href="#">Durum</a></li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="footer-bottom">
+        <div>&copy; 2026 SPF Prompt Factory. Tüm hakları saklıdır.</div>
+        <div class="social-links">
+          <a href="#"><i data-lucide="twitter" style="width: 18px; height: 18px;"></i></a>
+          <a href="#"><i data-lucide="github" style="width: 18px; height: 18px;"></i></a>
+          <a href="#"><i data-lucide="mail" style="width: 18px; height: 18px;"></i></a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Initialize Lucide Icons
+    lucide.createIcons();
+
+    // Mockup Data
+    const mockups = [
+      {
+        task: "Premium bir hukuk bürosu landing page yap, WhatsApp butonu olsun",
+        output: "@model\nYou are an expert web developer specializing in legal tech.\n\n@context\nTask: Build a premium law firm landing page with a WhatsApp integration.\n\n@skills\nSKILL: legal-landing-page\nSKILL: whatsapp-widget\n\n@validators\n- layout_is_responsive == true\n- contact_form_styled == true"
+      },
+      {
+        task: "PDF dosyalarını alıp özet çıkaran bir FastAPI endpointi yaz",
+        output: "@model\nYou are a backend engineer specializing in Python.\n\n@context\nTask: Build a FastAPI endpoint for PDF summarization.\n\n@skills\nSKILL: fastapi-skill\nSKILL: pdf-extractor-skill\n\n@validators\n- fastapi_running == true\n- pdf_parsed == true"
+      },
+      {
+        task: "PostgreSQL'de e-ticaret için kullanıcı ve ürün tabloları oluştur",
+        output: "@model\nYou are a Database Architect.\n\n@context\nTask: Ecommerce schema in PostgreSQL.\n\n@skills\nSKILL: postgres-mcp\nSKILL: db-schema-design\n\n@validators\n- foreign_keys_valid == true\n- indexes_created == true"
+      }
+    ];
+
+    let currentMockup = 0;
+    let mockupInterval;
+
+    function changeMockup(index) {
+      currentMockup = index;
+      document.getElementById('mockupTask').innerText = mockups[index].task;
+      document.getElementById('mockupOutput').innerText = mockups[index].output;
+      
+      const tabs = document.querySelectorAll('.mockup-tab');
+      tabs.forEach((tab, i) => {
+        if (i === index) tab.classList.add('active');
+        else tab.classList.remove('active');
+      });
+
+      resetMockupInterval();
+    }
+
+    function autoRotateMockup() {
+      currentMockup = (currentMockup + 1) % mockups.length;
+      changeMockup(currentMockup);
+    }
+
+    function resetMockupInterval() {
+      clearInterval(mockupInterval);
+      mockupInterval = setInterval(autoRotateMockup, 4000);
+    }
+
+    // Start rotation
+    resetMockupInterval();
+
+    // Custom Cursor
+    const cursor = document.getElementById('customCursor');
+    
+    if (window.matchMedia("(pointer: fine)").matches) {
+      document.addEventListener('mousemove', (e) => {
+        cursor.style.left = e.clientX + 'px';
+        cursor.style.top = e.clientY + 'px';
+      });
+
+      const interactiveElements = document.querySelectorAll('a, button, input, textarea');
+      interactiveElements.forEach(el => {
+        el.addEventListener('mouseenter', () => cursor.classList.add('hover'));
+        el.addEventListener('mouseleave', () => cursor.classList.remove('hover'));
+      });
+    }
+
+    // Navbar Scroll Behavior
+    const navbar = document.getElementById('navbar');
+    let lastScroll = 0;
+
+    window.addEventListener('scroll', () => {
+      const currentScroll = window.scrollY;
+      
+      // Add background when scrolled
+      if (currentScroll > 50) {
+        navbar.classList.add('scrolled');
+      } else {
+        navbar.classList.remove('scrolled');
+      }
+
+      // Hide/Show logic
+      if (currentScroll > lastScroll && currentScroll > 200) {
+        // Scrolling down
+        navbar.classList.add('hidden-scroll');
+      } else {
+        // Scrolling up
+        navbar.classList.remove('hidden-scroll');
+      }
+      
+      lastScroll = currentScroll;
+      
+      // Update active nav link
+      const sections = document.querySelectorAll('section');
+      const navLinks = document.querySelectorAll('.nav-link');
+      
+      let current = '';
+      sections.forEach(section => {
+        const sectionTop = section.offsetTop;
+        if (scrollY >= sectionTop - 150) {
+          current = section.getAttribute('id');
+        }
+      });
+
+      navLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === `#${current}`) {
+          link.classList.add('active');
+        }
+      });
+    });
+
+    // Mobile Menu Toggle
+    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+    const navLinks = document.getElementById('navLinks');
+    const navLinksItems = document.querySelectorAll('.nav-link');
+
+    mobileMenuBtn.addEventListener('click', () => {
+      navLinks.classList.toggle('active');
+      const icon = navLinks.classList.contains('active') ? 'x' : 'menu';
+      // Dynamically replace icon
+      mobileMenuBtn.innerHTML = `<i data-lucide="${icon}"></i>`;
+      lucide.createIcons();
+    });
+
+    navLinksItems.forEach(item => {
+      item.addEventListener('click', () => {
+        navLinks.classList.remove('active');
+        mobileMenuBtn.innerHTML = `<i data-lucide="menu"></i>`;
+        lucide.createIcons();
+      });
+    });
+
+    // Scroll Reveal Animation (Intersection Observer)
+    const revealElements = document.querySelectorAll('.reveal');
+    
+    const revealObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('active');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, {
+      root: null,
+      threshold: 0.15,
+      rootMargin: "0px 0px -50px 0px"
+    });
+
+    revealElements.forEach(el => revealObserver.observe(el));
+
+    // Counter Animation
+    const counters = document.querySelectorAll('.counter');
+    
+    const counterObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const counter = entry.target;
+          const target = +counter.getAttribute('data-target');
+          const duration = 2000; // 2 seconds
+          const increment = target / (duration / 16); // 60 FPS
+          
+          let current = 0;
+          
+          const updateCounter = () => {
+            current += increment;
+            if (current < target) {
+              counter.innerText = Math.ceil(current) + (target >= 500 ? '+' : '');
+              requestAnimationFrame(updateCounter);
+            } else {
+              counter.innerText = target + (target >= 500 ? '+' : '');
+            }
+          };
+          
+          updateCounter();
+          observer.unobserve(counter);
+        }
+      });
+    }, {
+      threshold: 0.5
+    });
+
+    counters.forEach(counter => counterObserver.observe(counter));
+
+  </script>
+</body>
+</html>
