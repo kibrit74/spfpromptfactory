@@ -9,6 +9,7 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
+import { createServer as createViteServer } from 'vite';
 
 dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -16,6 +17,9 @@ const app = express();
 const port = Number(process.env.PORT || 8200);
 const FileStore = sessionFileStoreFactory(session);
 const sessionStorePath = path.join(process.cwd(), '.sessions');
+const isDev = process.env.NODE_ENV !== 'production';
+const spaTemplatePath = path.join(process.cwd(), 'app.html');
+const spaDistPath = path.join(process.cwd(), 'dist', 'app.html');
 
 if (!fs.existsSync(sessionStorePath)) {
   fs.mkdirSync(sessionStorePath, { recursive: true });
@@ -138,6 +142,42 @@ function logOAuthError(error) {
     statusCode: error?.statusCode || error?.oauthError?.statusCode,
     details,
   });
+}
+
+let vite = null;
+if (isDev) {
+  vite = await createViteServer({
+    server: {
+      middlewareMode: true,
+      hmr: process.env.DISABLE_HMR !== 'true',
+    },
+    appType: 'custom',
+  });
+  app.use(vite.middlewares);
+} else {
+  const distAssetsPath = path.join(process.cwd(), 'dist', 'assets');
+  if (fs.existsSync(distAssetsPath)) {
+    app.use('/assets', express.static(distAssetsPath));
+  }
+}
+
+async function renderSpaShell(req, res, next) {
+  try {
+    if (vite) {
+      const template = await vite.transformIndexHtml(
+        req.originalUrl,
+        fs.readFileSync(spaTemplatePath, 'utf8'),
+      );
+      return res.status(200).type('html').send(template);
+    }
+
+    return res.sendFile(spaDistPath);
+  } catch (error) {
+    if (vite) {
+      vite.ssrFixStacktrace(error);
+    }
+    return next(error);
+  }
 }
 
 passport.serializeUser((user, done) => {
@@ -1637,39 +1677,25 @@ app.delete('/api/prompts/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/login', (req, res) => {
+app.get('/login', (req, res, next) => {
   if (req.isAuthenticated()) return res.redirect('/profile');
-  return res.send(renderLoginPage());
+  return renderSpaShell(req, res, next);
 });
 
 app.get('/', (req, res) => {
-  res.sendFile(process.cwd() + '/index.html');
+  res.sendFile(path.join(process.cwd(), 'index.html'));
 });
 
 app.get('/landing', (req, res) => {
   res.redirect(301, '/');
 });
 
-app.get('/app', requireAuth, (req, res) => {
-  res.send(renderAppPage(req.user));
+app.get('/app', requireAuth, (req, res, next) => {
+  return renderSpaShell(req, res, next);
 });
 
-app.get('/profile', requireAuth, async (req, res) => {
-  try {
-    await hydrateAuthenticatedUser(req);
-    const prompts = await fetchUserPrompts(req.user.id);
-    res.send(renderProfilePage(req.user, prompts));
-  } catch (error) {
-    if (supabaseAdminDisabledReason) {
-      return res.send(renderProfilePage(req.user, []));
-    }
-    console.error('Profile page fallback rendered:', {
-      message: error?.message,
-      code: error?.code,
-      status: error?.status,
-    });
-    res.send(renderProfilePage(req.user, []));
-  }
+app.get('/profile', requireAuth, (req, res, next) => {
+  return renderSpaShell(req, res, next);
 });
 
 app.listen(port, '0.0.0.0', () => {

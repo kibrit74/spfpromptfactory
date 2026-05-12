@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "build": "echo 'No build step'",
+    "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -15,6 +15,9 @@
     "@google/genai": "^1.29.0",
     "@supabase/supabase-js": "^2.86.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@types/express-session": "^1.19.0",
+    "@types/passport": "^1.0.17",
+    "@types/passport-google-oauth20": "^2.0.17",
     "@vitejs/plugin-react": "^5.0.4",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
@@ -26,6 +29,7 @@
     "passport-google-oauth20": "^2.0.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "react-router-dom": "^7.15.0",
     "session-file-store": "^1.5.0",
     "vite": "^6.2.3"
   },
