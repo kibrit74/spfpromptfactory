@@ -18,6 +18,30 @@ import {
   normalizeAnalysisPayload,
   parseJsonObject,
 } from './server/prompt-intelligence.js';
+import {
+  CREDIT_COSTS,
+  CREDIT_PACKAGES,
+  canSpendCredits,
+  getCreditCost,
+  getCreditPackage,
+} from './server/credits.js';
+import {
+  buildAdminCreditTransactionRows,
+  buildAdminOverview,
+  buildAdminUserRows,
+  isAdminUser,
+} from './server/admin-analytics.js';
+import {
+  buildActiveRecords,
+  evaluateActionAccess,
+  getDailyUsageCounts,
+  normalizeUserControls,
+} from './server/admin-controls.js';
+import {
+  applyMarketUserState,
+  normalizeMarketShareInput,
+  rankMarketItems,
+} from './server/prompt-market.js';
 
 dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -64,7 +88,16 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(async (req, _res, next) => {
-  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id || !isSupabaseAdminAvailable()) {
+  if (
+    !req.isAuthenticated?.() ||
+    (
+      req.user?.id &&
+      typeof req.user?.is_admin !== 'undefined' &&
+      typeof req.user?.is_blocked !== 'undefined'
+    ) ||
+    !req.user?.google_id ||
+    !isSupabaseAdminAvailable()
+  ) {
     return next();
   }
 
@@ -106,6 +139,7 @@ const supabaseAdmin =
     : null;
 
 const googleOAuthConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const configuredAdminEmails = process.env.ADMIN_EMAILS || '';
 const defaultAppUrl = process.env.APP_URL || `http://localhost:${port}`;
 const configuredGoogleCallbackUrl =
   process.env.GOOGLE_CALLBACK_URL || `${normalizeBaseUrl(defaultAppUrl)}/auth/google/callback`;
@@ -482,6 +516,26 @@ function requireAuth(req, res, next) {
   return res.redirect('/login');
 }
 
+async function requireAdmin(req, res, next) {
+  if (!req.isAuthenticated()) {
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    return res.redirect('/login');
+  }
+
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (isAdminUser(req.user, configuredAdminEmails)) return next();
+    if (req.path.startsWith('/api/')) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    return res.redirect('/profile');
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
 function ensureSupabaseAdmin() {
   if (!supabaseAdmin) {
     throw Object.assign(new Error('Supabase configuration is missing.'), { status: 500 });
@@ -507,11 +561,14 @@ async function syncGoogleUser(profileUser) {
     avatar_url: profileUser.avatar_url,
     last_login: new Date().toISOString(),
   };
+  if (isAdminUser(profileUser, configuredAdminEmails)) {
+    payload.is_admin = true;
+  }
 
   const { data, error } = await client
     .from('users')
     .upsert(payload, { onConflict: 'google_id' })
-    .select('id, google_id, email, name, avatar_url, last_login')
+    .select('id, google_id, email, name, avatar_url, last_login, is_admin, is_blocked, block_reason, daily_prompt_limit, daily_revision_limit, daily_analysis_limit, admin_notes')
     .single();
 
   if (error) {
@@ -522,7 +579,16 @@ async function syncGoogleUser(profileUser) {
 }
 
 async function hydrateAuthenticatedUser(req) {
-  if (!req.isAuthenticated?.() || req.user?.id || !req.user?.google_id || !isSupabaseAdminAvailable()) {
+  if (
+    !req.isAuthenticated?.() ||
+    (
+      req.user?.id &&
+      typeof req.user?.is_admin !== 'undefined' &&
+      typeof req.user?.is_blocked !== 'undefined'
+    ) ||
+    !req.user?.google_id ||
+    !isSupabaseAdminAvailable()
+  ) {
     return req.user;
   }
 
@@ -622,6 +688,148 @@ async function fetchPromptVersionsForUser(userId, promptId) {
   return { prompt, versions: data || [] };
 }
 
+async function fetchMarketItem(itemId) {
+  if (!itemId || !isSupabaseAdminAvailable()) return null;
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompt_market_items')
+    .select('id, prompt_id, user_id, title, description, category, prompt_text, source_task, star_count, comment_count, save_count, usage_count, is_active, created_at, updated_at')
+    .eq('id', itemId)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data || null;
+}
+
+async function refreshMarketCounts(itemId) {
+  const client = ensureSupabaseAdmin();
+  const [starsResult, savesResult, commentsResult] = await Promise.all([
+    client.from('prompt_market_stars').select('id', { count: 'exact', head: true }).eq('market_item_id', itemId),
+    client.from('prompt_market_saves').select('id', { count: 'exact', head: true }).eq('market_item_id', itemId),
+    client.from('prompt_market_comments').select('id', { count: 'exact', head: true }).eq('market_item_id', itemId),
+  ]);
+
+  const failed = [starsResult, savesResult, commentsResult].find((result) => result.error);
+  if (failed?.error) {
+    disableSupabaseAdmin(failed.error);
+    throw failed.error;
+  }
+
+  const { data, error } = await client
+    .from('prompt_market_items')
+    .update({
+      star_count: starsResult.count || 0,
+      save_count: savesResult.count || 0,
+      comment_count: commentsResult.count || 0,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', itemId)
+    .select('id, prompt_id, user_id, title, description, category, prompt_text, source_task, star_count, comment_count, save_count, usage_count, is_active, created_at, updated_at')
+    .single();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data;
+}
+
+async function fetchMarketItemsForUser(userId, filters = {}) {
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompt_market_items')
+    .select('id, prompt_id, user_id, title, description, category, prompt_text, source_task, star_count, comment_count, save_count, usage_count, is_active, created_at, updated_at')
+    .eq('is_active', true)
+    .limit(200);
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+
+  const query = String(filters.query || '').trim().toLowerCase();
+  const category = String(filters.category || '').trim().toLowerCase();
+  const visibleItems = (data || []).filter((item) => {
+    const matchesCategory = !category || String(item.category || '').toLowerCase() === category;
+    const haystack = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.source_task || ''}`.toLowerCase();
+    return matchesCategory && (!query || haystack.includes(query));
+  });
+  const ids = visibleItems.map((item) => item.id);
+  const authorIds = [...new Set(visibleItems.map((item) => item.user_id).filter(Boolean))];
+
+  const [starsResult, savesResult, authorsResult] = await Promise.all([
+    ids.length
+      ? client.from('prompt_market_stars').select('market_item_id').eq('user_id', userId).in('market_item_id', ids)
+      : Promise.resolve({ data: [], error: null }),
+    ids.length
+      ? client.from('prompt_market_saves').select('market_item_id').eq('user_id', userId).in('market_item_id', ids)
+      : Promise.resolve({ data: [], error: null }),
+    authorIds.length
+      ? client.from('users').select('id, email, name').in('id', authorIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const failed = [starsResult, savesResult, authorsResult].find((result) => result.error);
+  if (failed?.error) {
+    disableSupabaseAdmin(failed.error);
+    throw failed.error;
+  }
+
+  const authorsById = new Map((authorsResult.data || []).map((user) => [user.id, user]));
+  const withAuthors = visibleItems.map((item) => {
+    const author = authorsById.get(item.user_id);
+    return {
+      ...item,
+      author_name: author?.name || null,
+      author_email: author?.email || null,
+    };
+  });
+
+  return rankMarketItems(applyMarketUserState(
+    withAuthors,
+    starsResult.data || [],
+    savesResult.data || [],
+  ));
+}
+
+async function fetchMarketComments(itemId) {
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('prompt_market_comments')
+    .select('id, market_item_id, user_id, body, created_at')
+    .eq('market_item_id', itemId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+
+  const userIds = [...new Set((data || []).map((comment) => comment.user_id).filter(Boolean))];
+  const usersResult = userIds.length
+    ? await client.from('users').select('id, email, name').in('id', userIds)
+    : { data: [], error: null };
+  if (usersResult.error) {
+    disableSupabaseAdmin(usersResult.error);
+    throw usersResult.error;
+  }
+
+  const usersById = new Map((usersResult.data || []).map((user) => [user.id, user]));
+  return (data || []).map((comment) => {
+    const user = usersById.get(comment.user_id);
+    return {
+      ...comment,
+      user_name: user?.name || null,
+      user_email: user?.email || null,
+    };
+  });
+}
+
 async function createPromptVersion({
   promptId,
   versionNumber,
@@ -654,6 +862,272 @@ async function createPromptVersion({
     throw error;
   }
   return data;
+}
+
+async function fetchCreditBalance(userId) {
+  if (!userId) return 0;
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('credit_transactions')
+    .select('delta')
+    .eq('user_id', userId);
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+
+  return (data || []).reduce((total, transaction) => total + Number(transaction.delta || 0), 0);
+}
+
+async function ensureFreeCredits(userId) {
+  if (!userId) {
+    throw Object.assign(new Error('Authentication required'), { status: 401 });
+  }
+
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('credit_transactions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('reason', 'signup_bonus')
+    .maybeSingle();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+
+  if (data?.id) return;
+
+  const freePackage = getCreditPackage('free');
+  const { error: insertError } = await client
+    .from('credit_transactions')
+    .insert({
+      user_id: userId,
+      delta: freePackage.credits,
+      reason: 'signup_bonus',
+      package_id: freePackage.id,
+      description: 'Free baslangic kredisi',
+    });
+
+  if (insertError && insertError.code !== '23505') {
+    disableSupabaseAdmin(insertError);
+    throw insertError;
+  }
+}
+
+async function getCreditSummary(userId) {
+  await ensureFreeCredits(userId);
+  const balance = await fetchCreditBalance(userId);
+  return {
+    balance,
+    costs: CREDIT_COSTS,
+    packages: CREDIT_PACKAGES,
+  };
+}
+
+async function assertEnoughCredits(userId, action) {
+  await ensureFreeCredits(userId);
+  const balance = await fetchCreditBalance(userId);
+  const cost = getCreditCost(action);
+
+  if (!canSpendCredits(balance, cost)) {
+    throw Object.assign(
+      new Error(`Yetersiz kredi. Bu islem ${cost} kredi gerektirir. Mevcut kredi: ${balance}.`),
+      {
+        status: 402,
+        credits_required: cost,
+        credits_balance: balance,
+      },
+    );
+  }
+
+  return { balance, cost };
+}
+
+async function spendCredits(userId, action, reference = {}) {
+  const cost = getCreditCost(action);
+  const client = ensureSupabaseAdmin();
+  const { error } = await client
+    .from('credit_transactions')
+    .insert({
+      user_id: userId,
+      delta: -cost,
+      reason: action,
+      reference_type: reference.type || null,
+      reference_id: reference.id || null,
+      description: reference.description || null,
+    });
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+
+  return fetchCreditBalance(userId);
+}
+
+async function fetchAdminDataset() {
+  const client = ensureSupabaseAdmin();
+  const [
+    usersResult,
+    promptsResult,
+    versionsResult,
+    creditsResult,
+    announcementsResult,
+    campaignsResult,
+    auditLogsResult,
+  ] = await Promise.all([
+    client
+      .from('users')
+      .select('id, google_id, email, name, avatar_url, created_at, last_login, is_admin, is_blocked, block_reason, blocked_at, daily_prompt_limit, daily_revision_limit, daily_analysis_limit, admin_notes')
+      .order('created_at', { ascending: false })
+      .limit(5000),
+    client
+      .from('prompts')
+      .select('id, user_id, task, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10000),
+    client
+      .from('prompt_versions')
+      .select('id, prompt_id, version_number, revision_instruction, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10000),
+    client
+      .from('credit_transactions')
+      .select('id, user_id, delta, reason, reference_type, reference_id, package_id, description, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10000),
+    client
+      .from('announcements')
+      .select('id, title, body, severity, status, starts_at, ends_at, created_by, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(1000),
+    client
+      .from('campaigns')
+      .select('id, name, code, description, credit_bonus, starts_at, ends_at, max_redemptions, redeemed_count, is_active, created_by, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(1000),
+    client
+      .from('admin_audit_logs')
+      .select('id, admin_user_id, action, target_type, target_id, details, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1000),
+  ]);
+
+  const failed = [
+    usersResult,
+    promptsResult,
+    versionsResult,
+    creditsResult,
+    announcementsResult,
+    campaignsResult,
+    auditLogsResult,
+  ].find((result) => result.error);
+  if (failed?.error) {
+    disableSupabaseAdmin(failed.error);
+    throw failed.error;
+  }
+
+  return {
+    users: usersResult.data || [],
+    prompts: promptsResult.data || [],
+    promptVersions: versionsResult.data || [],
+    creditTransactions: creditsResult.data || [],
+    announcements: announcementsResult.data || [],
+    campaigns: campaignsResult.data || [],
+    auditLogs: auditLogsResult.data || [],
+  };
+}
+
+async function fetchUserControls(userId) {
+  const client = ensureSupabaseAdmin();
+  const { data, error } = await client
+    .from('users')
+    .select('id, email, is_blocked, block_reason, daily_prompt_limit, daily_revision_limit, daily_analysis_limit')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    disableSupabaseAdmin(error);
+    throw error;
+  }
+  return data;
+}
+
+async function fetchUserDailyUsage(userId) {
+  const client = ensureSupabaseAdmin();
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+
+  const [promptsResult, creditsResult] = await Promise.all([
+    client
+      .from('prompts')
+      .select('id, user_id, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', since.toISOString())
+      .limit(10000),
+    client
+      .from('credit_transactions')
+      .select('id, user_id, reason, created_at')
+      .eq('user_id', userId)
+      .in('reason', ['revise', 'analyze'])
+      .gte('created_at', since.toISOString())
+      .limit(10000),
+  ]);
+
+  const failed = [promptsResult, creditsResult].find((result) => result.error);
+  if (failed?.error) {
+    disableSupabaseAdmin(failed.error);
+    throw failed.error;
+  }
+
+  return getDailyUsageCounts(
+    {
+      prompts: promptsResult.data || [],
+      creditTransactions: creditsResult.data || [],
+    },
+    userId,
+  );
+}
+
+async function assertUserActionAllowed(userId, action) {
+  const [userControls, usageCounts] = await Promise.all([
+    fetchUserControls(userId),
+    fetchUserDailyUsage(userId),
+  ]);
+  const access = evaluateActionAccess(userControls, action, usageCounts);
+  if (!access.allowed) {
+    throw Object.assign(new Error(access.reason), {
+      status: access.status,
+      action,
+      usage_counts: usageCounts,
+    });
+  }
+}
+
+async function fetchAdminUserRow(userId) {
+  const dataset = await fetchAdminDataset();
+  return buildAdminUserRows(dataset).find((user) => user.id === userId) || null;
+}
+
+async function logAdminAction(adminUserId, action, targetType, targetId, details = {}) {
+  if (!adminUserId || !isSupabaseAdminAvailable()) return;
+  const client = ensureSupabaseAdmin();
+  const { error } = await client
+    .from('admin_audit_logs')
+    .insert({
+      admin_user_id: adminUserId,
+      action,
+      target_type: targetType,
+      target_id: targetId || null,
+      details,
+    });
+
+  if (error) {
+    console.error('Admin audit log skipped:', error.message);
+  }
 }
 
 async function savePromptIfPossible(userId, task, prompt, contextPack = null) {
@@ -773,6 +1247,20 @@ function getConfiguredProject() {
 
 function handleError(res, error) {
   console.error(error);
+  if (error.status === 402) {
+    return res.status(402).json({
+      error: error.message || 'Yetersiz kredi.',
+      credits_required: error.credits_required,
+      credits_balance: error.credits_balance,
+    });
+  }
+  if (error.status === 429) {
+    return res.status(429).json({
+      error: error.message || 'Gunluk limit doldu.',
+      action: error.action,
+      usage_counts: error.usage_counts,
+    });
+  }
   if (error.message?.includes('BILLING_DISABLED') || error.message?.includes('requires billing to be enabled')) {
     return res.status(403).json({
       error: `Google Cloud projesinde faturalandirma kapali. Vertex AI/Gemini cagrisi icin ${getConfiguredProject()} projesinde billing etkinlestirilmeli.`,
@@ -782,6 +1270,9 @@ function handleError(res, error) {
     return res.status(403).json({
       error: `Servis hesabinda ${getConfiguredProject()} projesi icin Vertex AI predict izni yok. IAM tarafinda Vertex AI User rolunu veya aiplatform.endpoints.predict iznini ekleyin.`,
     });
+  }
+  if (error.status === 403) {
+    return res.status(403).json({ error: error.message || 'Forbidden' });
   }
   if (error.status === 401 || error.status === 403) {
     return res.status(503).json({
@@ -1725,13 +2216,16 @@ app.get('/api/auth/session', (req, res) => {
   res.json({
     authenticated: req.isAuthenticated(),
     user: req.isAuthenticated()
-      ? {
-          id: req.user.id,
-          email: req.user.email,
-          name: req.user.name,
-          avatar_url: req.user.avatar_url,
-        }
-      : null,
+        ? {
+            id: req.user.id,
+            email: req.user.email,
+            name: req.user.name,
+            avatar_url: req.user.avatar_url,
+            is_admin: Boolean(isAdminUser(req.user, configuredAdminEmails)),
+            is_blocked: Boolean(req.user.is_blocked),
+            block_reason: req.user.block_reason || '',
+          }
+        : null,
   });
 });
 
@@ -1744,6 +2238,330 @@ app.get('/api/auth/config', (_req, res) => {
   });
 });
 
+app.get('/api/credits', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const summary = await getCreditSummary(req.user.id);
+    return res.json(summary);
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/credits/checkout', requireAuth, async (req, res) => {
+  try {
+    const packageId = typeof req.body?.package_id === 'string' ? req.body.package_id : '';
+    const creditPackage = getCreditPackage(packageId);
+    if (!creditPackage) return res.status(400).json({ error: 'Credit package not found' });
+
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const summary = await getCreditSummary(req.user.id);
+    return res.json({
+      ...summary,
+      package: creditPackage,
+      checkout_url: null,
+      payment_required: creditPackage.price_cents > 0,
+      message:
+        creditPackage.price_cents > 0
+          ? 'Odeme saglayici henuz bagli degil. Stripe veya Lemon Squeezy baglaninca bu paket otomatik kredi yukler.'
+          : 'Free kredi paketi hesabiniza otomatik tanimlanir.',
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/admin/overview', requireAdmin, async (_req, res) => {
+  try {
+    const dataset = await fetchAdminDataset();
+    const userRows = buildAdminUserRows(dataset);
+    return res.json({
+      overview: buildAdminOverview(dataset),
+      recent_users: userRows.slice(0, 8),
+      recent_credit_transactions: buildAdminCreditTransactionRows(
+        dataset.creditTransactions.slice(0, 20),
+        dataset.users,
+      ),
+      announcements: dataset.announcements,
+      campaigns: dataset.campaigns,
+      audit_logs: dataset.auditLogs.slice(0, 30),
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/admin/users', requireAdmin, async (_req, res) => {
+  try {
+    const dataset = await fetchAdminDataset();
+    return res.json({ users: buildAdminUserRows(dataset) });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/admin/users/:id/credits', requireAdmin, async (req, res) => {
+  try {
+    const delta = Number(req.body?.delta);
+    const description =
+      typeof req.body?.description === 'string'
+        ? req.body.description.trim()
+        : '';
+
+    if (!Number.isInteger(delta) || delta === 0 || Math.abs(delta) > 100000) {
+      return res.status(400).json({ error: 'Credit delta must be a non-zero integer up to 100000.' });
+    }
+
+    const client = ensureSupabaseAdmin();
+    const { data: targetUser, error: userError } = await client
+      .from('users')
+      .select('id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (userError) throw userError;
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+    const { error } = await client
+      .from('credit_transactions')
+      .insert({
+        user_id: req.params.id,
+        delta,
+        reason: 'admin_adjustment',
+        reference_type: 'admin_user',
+        reference_id: req.user.id || null,
+        description: description || `Admin adjustment by ${req.user.email}`,
+      });
+
+    if (error) throw error;
+    await logAdminAction(req.user.id, 'credit_adjustment', 'user', req.params.id, { delta, description });
+    const user = await fetchAdminUserRow(req.params.id);
+    return res.json({ user });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const updates = {};
+    if (typeof req.body?.is_admin === 'boolean') updates.is_admin = req.body.is_admin;
+    if (
+      'is_blocked' in req.body ||
+      'block_reason' in req.body ||
+      'admin_notes' in req.body ||
+      'daily_prompt_limit' in req.body ||
+      'daily_revision_limit' in req.body ||
+      'daily_analysis_limit' in req.body
+    ) {
+      Object.assign(updates, normalizeUserControls(req.body));
+      updates.blocked_at = updates.is_blocked ? new Date().toISOString() : null;
+      if (!updates.is_blocked) updates.block_reason = '';
+    }
+
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ error: 'No updates provided' });
+    }
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('users')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select('id')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'User not found' });
+    await logAdminAction(req.user.id, 'user_update', 'user', req.params.id, updates);
+    const user = await fetchAdminUserRow(req.params.id);
+    return res.json({ user });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/admin/announcements', requireAdmin, async (_req, res) => {
+  try {
+    const dataset = await fetchAdminDataset();
+    return res.json({ announcements: dataset.announcements });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/admin/announcements', requireAdmin, async (req, res) => {
+  try {
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    const severity = typeof req.body?.severity === 'string' ? req.body.severity : 'info';
+    const status = typeof req.body?.status === 'string' ? req.body.status : 'draft';
+    if (!title || !body) return res.status(400).json({ error: 'Title and body are required' });
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('announcements')
+      .insert({
+        title,
+        body,
+        severity,
+        status,
+        starts_at: req.body?.starts_at || null,
+        ends_at: req.body?.ends_at || null,
+        created_by: req.user.id,
+      })
+      .select('id, title, body, severity, status, starts_at, ends_at, created_by, created_at, updated_at')
+      .single();
+
+    if (error) throw error;
+    await logAdminAction(req.user.id, 'announcement_create', 'announcement', data.id, { title, status });
+    return res.status(201).json({ announcement: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.patch('/api/admin/announcements/:id', requireAdmin, async (req, res) => {
+  try {
+    const updates = {};
+    for (const key of ['title', 'body', 'severity', 'status', 'starts_at', 'ends_at']) {
+      if (key in req.body) updates[key] = typeof req.body[key] === 'string' ? req.body[key].trim() || null : req.body[key];
+    }
+    updates.updated_at = new Date().toISOString();
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('announcements')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select('id, title, body, severity, status, starts_at, ends_at, created_by, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Announcement not found' });
+    await logAdminAction(req.user.id, 'announcement_update', 'announcement', req.params.id, updates);
+    return res.json({ announcement: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.delete('/api/admin/announcements/:id', requireAdmin, async (req, res) => {
+  try {
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('announcements')
+      .delete()
+      .eq('id', req.params.id)
+      .select('id')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Announcement not found' });
+    await logAdminAction(req.user.id, 'announcement_delete', 'announcement', req.params.id);
+    return res.json({ ok: true });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/admin/campaigns', requireAdmin, async (_req, res) => {
+  try {
+    const dataset = await fetchAdminDataset();
+    return res.json({ campaigns: dataset.campaigns });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/admin/campaigns', requireAdmin, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim().toUpperCase() : '';
+    const creditBonus = Number(req.body?.credit_bonus || 0);
+    if (!name || !code || !Number.isInteger(creditBonus) || creditBonus < 0) {
+      return res.status(400).json({ error: 'Name, code, and non-negative credit bonus are required' });
+    }
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('campaigns')
+      .insert({
+        name,
+        code,
+        description: typeof req.body?.description === 'string' ? req.body.description.trim() : '',
+        credit_bonus: creditBonus,
+        starts_at: req.body?.starts_at || null,
+        ends_at: req.body?.ends_at || null,
+        max_redemptions: Number.isInteger(Number(req.body?.max_redemptions))
+          ? Number(req.body.max_redemptions)
+          : null,
+        is_active: Boolean(req.body?.is_active),
+        created_by: req.user.id,
+      })
+      .select('id, name, code, description, credit_bonus, starts_at, ends_at, max_redemptions, redeemed_count, is_active, created_by, created_at, updated_at')
+      .single();
+
+    if (error) throw error;
+    await logAdminAction(req.user.id, 'campaign_create', 'campaign', data.id, { code, creditBonus });
+    return res.status(201).json({ campaign: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.patch('/api/admin/campaigns/:id', requireAdmin, async (req, res) => {
+  try {
+    const updates = {};
+    for (const key of ['name', 'code', 'description', 'starts_at', 'ends_at']) {
+      if (key in req.body) updates[key] = typeof req.body[key] === 'string' ? req.body[key].trim() || null : req.body[key];
+    }
+    if ('code' in updates && updates.code) updates.code = updates.code.toUpperCase();
+    if ('credit_bonus' in req.body) updates.credit_bonus = Number(req.body.credit_bonus);
+    if ('max_redemptions' in req.body) {
+      updates.max_redemptions = req.body.max_redemptions === null || req.body.max_redemptions === ''
+        ? null
+        : Number(req.body.max_redemptions);
+    }
+    if ('is_active' in req.body) updates.is_active = Boolean(req.body.is_active);
+    updates.updated_at = new Date().toISOString();
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('campaigns')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select('id, name, code, description, credit_bonus, starts_at, ends_at, max_redemptions, redeemed_count, is_active, created_by, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Campaign not found' });
+    await logAdminAction(req.user.id, 'campaign_update', 'campaign', req.params.id, updates);
+    return res.json({ campaign: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/announcements', requireAuth, async (_req, res) => {
+  try {
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('announcements')
+      .select('id, title, body, severity, status, starts_at, ends_at, created_at')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+    return res.json({ announcements: buildActiveRecords(data || []) });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
 app.post('/api/generate', requireAuth, async (req, res) => {
   try {
     const { task, context_pack_id: contextPackId } = req.body;
@@ -1752,6 +2570,8 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     }
 
     await hydrateAuthenticatedUser(req);
+    await assertUserActionAllowed(req.user?.id, 'generate');
+    await assertEnoughCredits(req.user?.id, 'generate');
     const contextPack = contextPackId
       ? await fetchUserContextPack(req.user?.id, contextPackId)
       : null;
@@ -1776,16 +2596,23 @@ app.post('/api/generate', requireAuth, async (req, res) => {
       promptId = await savePromptIfPossible(req.user?.id, task.trim(), prompt, contextPack);
     } catch (saveError) {
       if (supabaseAdminDisabledReason) {
-        return res.json({ prompt, prompt_id: null });
+        throw saveError;
       }
       console.error('Prompt save skipped:', {
         message: saveError?.message,
         code: saveError?.code,
         status: saveError?.status,
       });
+      throw saveError;
     }
 
-    return res.json({ prompt, prompt_id: promptId });
+    const creditsBalance = await spendCredits(req.user.id, 'generate', {
+      type: 'prompt',
+      id: promptId,
+      description: 'Prompt uretimi',
+    });
+
+    return res.json({ prompt, prompt_id: promptId, credits_balance: creditsBalance });
   } catch (error) {
     return handleError(res, error);
   }
@@ -1799,6 +2626,8 @@ app.post('/api/prompts/analyze', requireAuth, async (req, res) => {
     }
 
     await hydrateAuthenticatedUser(req);
+    await assertUserActionAllowed(req.user?.id, 'analyze');
+    await assertEnoughCredits(req.user?.id, 'analyze');
     const contextPack = contextPackId
       ? await fetchUserContextPack(req.user?.id, contextPackId)
       : null;
@@ -1808,7 +2637,11 @@ app.post('/api/prompts/analyze', requireAuth, async (req, res) => {
     }
 
     const analysis = await analyzePromptInput(task.trim(), contextPack);
-    return res.json({ analysis });
+    const creditsBalance = await spendCredits(req.user.id, 'analyze', {
+      type: 'prompt_analysis',
+      description: 'Eksik baglam analizi',
+    });
+    return res.json({ analysis, credits_balance: creditsBalance });
   } catch (error) {
     return handleError(res, error);
   }
@@ -1924,6 +2757,200 @@ app.delete('/api/context-packs/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/market', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const items = await fetchMarketItemsForUser(req.user.id, {
+      query: req.query.q,
+      category: req.query.category,
+    });
+    const categories = [...new Set(items.map((item) => item.category).filter(Boolean))].sort((a, b) =>
+      String(a).localeCompare(String(b), 'tr'),
+    );
+
+    return res.json({ items, categories });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/prompts/:id/share', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(404).json({ error: 'Prompt not found' });
+
+    const prompt = await fetchPromptForUser(req.user.id, req.params.id);
+    if (!prompt) return res.status(404).json({ error: 'Prompt not found' });
+
+    const input = normalizeMarketShareInput(req.body, prompt);
+    if (!input.prompt_text) {
+      return res.status(400).json({ error: 'Prompt content is required' });
+    }
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('prompt_market_items')
+      .upsert(
+        {
+          prompt_id: prompt.id,
+          user_id: req.user.id,
+          title: input.title,
+          description: input.description,
+          category: input.category,
+          prompt_text: input.prompt_text,
+          source_task: input.source_task,
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'prompt_id' },
+      )
+      .select('id, prompt_id, user_id, title, description, category, prompt_text, source_task, star_count, comment_count, save_count, usage_count, is_active, created_at, updated_at')
+      .single();
+
+    if (error) throw error;
+    return res.status(201).json({ item: data });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/market/:id/star', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const item = await fetchMarketItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Market prompt not found' });
+
+    const client = ensureSupabaseAdmin();
+    if (req.body?.starred === false) {
+      const { error } = await client
+        .from('prompt_market_stars')
+        .delete()
+        .eq('market_item_id', item.id)
+        .eq('user_id', req.user.id);
+      if (error) throw error;
+    } else {
+      const { error } = await client
+        .from('prompt_market_stars')
+        .upsert({ market_item_id: item.id, user_id: req.user.id }, { onConflict: 'market_item_id,user_id' });
+      if (error) throw error;
+    }
+
+    const updated = await refreshMarketCounts(item.id);
+    return res.json({ item: { ...updated, starred_by_user: req.body?.starred !== false } });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/market/:id/save', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const item = await fetchMarketItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Market prompt not found' });
+
+    const client = ensureSupabaseAdmin();
+    if (req.body?.saved === false) {
+      const { error } = await client
+        .from('prompt_market_saves')
+        .delete()
+        .eq('market_item_id', item.id)
+        .eq('user_id', req.user.id);
+      if (error) throw error;
+    } else {
+      const { error } = await client
+        .from('prompt_market_saves')
+        .upsert({ market_item_id: item.id, user_id: req.user.id }, { onConflict: 'market_item_id,user_id' });
+      if (error) throw error;
+    }
+
+    const updated = await refreshMarketCounts(item.id);
+    return res.json({ item: { ...updated, saved_by_user: req.body?.saved !== false } });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.get('/api/market/:id/comments', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    const item = await fetchMarketItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Market prompt not found' });
+
+    const comments = await fetchMarketComments(item.id);
+    return res.json({ comments });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/market/:id/comments', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+
+    const item = await fetchMarketItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Market prompt not found' });
+
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!body) return res.status(400).json({ error: 'Comment is required' });
+    if (body.length > 1000) return res.status(400).json({ error: 'Comment is too long' });
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('prompt_market_comments')
+      .insert({
+        market_item_id: item.id,
+        user_id: req.user.id,
+        body,
+      })
+      .select('id, market_item_id, user_id, body, created_at')
+      .single();
+
+    if (error) throw error;
+    const updated = await refreshMarketCounts(item.id);
+    return res.status(201).json({
+      comment: {
+        ...data,
+        user_name: req.user.name || null,
+        user_email: req.user.email || null,
+      },
+      item: updated,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
+app.post('/api/market/:id/use', requireAuth, async (req, res) => {
+  try {
+    await hydrateAuthenticatedUser(req);
+    const item = await fetchMarketItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Market prompt not found' });
+
+    const client = ensureSupabaseAdmin();
+    const { data, error } = await client
+      .from('prompt_market_items')
+      .update({
+        usage_count: Number(item.usage_count || 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', item.id)
+      .select('id, prompt_id, user_id, title, description, category, prompt_text, source_task, star_count, comment_count, save_count, usage_count, is_active, created_at, updated_at')
+      .single();
+
+    if (error) throw error;
+    return res.json({ item: data, prompt: item.prompt_text });
+  } catch (error) {
+    return handleError(res, error);
+  }
+});
+
 app.get('/api/prompts', requireAuth, async (req, res) => {
   try {
     await hydrateAuthenticatedUser(req);
@@ -1970,6 +2997,8 @@ app.post('/api/prompts/:id/revise', requireAuth, async (req, res) => {
 
     await hydrateAuthenticatedUser(req);
     if (!req.user?.id) return res.status(404).json({ error: 'Prompt not found' });
+    await assertUserActionAllowed(req.user.id, 'revise');
+    await assertEnoughCredits(req.user.id, 'revise');
 
     const prompt = await fetchPromptForUser(req.user.id, req.params.id);
     if (!prompt) return res.status(404).json({ error: 'Prompt not found' });
@@ -2026,10 +3055,17 @@ app.post('/api/prompts/:id/revise', requireAuth, async (req, res) => {
 
     if (updateError) throw updateError;
 
+    const creditsBalance = await spendCredits(req.user.id, 'revise', {
+      type: 'prompt',
+      id: req.params.id,
+      description: 'Prompt revizyonu',
+    });
+
     return res.json({
       prompt: revisedPrompt,
       version,
       analysis,
+      credits_balance: creditsBalance,
     });
   } catch (error) {
     return handleError(res, error);
@@ -2073,6 +3109,14 @@ app.get('/landing', (req, res) => {
 });
 
 app.get('/app', requireAuth, (req, res, next) => {
+  return renderSpaShell(req, res, next);
+});
+
+app.get('/market', requireAuth, (req, res, next) => {
+  return renderSpaShell(req, res, next);
+});
+
+app.get('/admin', requireAdmin, (req, res, next) => {
   return renderSpaShell(req, res, next);
 });
 

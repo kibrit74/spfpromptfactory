@@ -6,13 +6,14 @@ import {
   Search,
   Sparkles,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Avatar } from '../components/Avatar';
 import { AppShell } from '../components/AppShell';
-import { deletePrompt, getPrompts, getPromptVersions } from '../lib/api';
+import { deletePrompt, getPrompts, getPromptVersions, sharePrompt } from '../lib/api';
 import type { PromptRecord, PromptVersion, SessionUser } from '../lib/types';
 
 function formatDate(value: string) {
@@ -34,6 +35,9 @@ export function ProfilePage({ user }: { user: SessionUser }) {
   const [versions, setVersions] = useState<PromptVersion[]>([]);
   const [activeVersion, setActiveVersion] = useState<PromptVersion | null>(null);
   const [copyId, setCopyId] = useState<string | null>(null);
+  const [shareForm, setShareForm] = useState({ title: '', description: '', category: 'Genel' });
+  const [shareStatus, setShareStatus] = useState('');
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     getPrompts()
@@ -57,6 +61,12 @@ export function ProfilePage({ user }: { user: SessionUser }) {
         setVersions([]);
         setActiveVersion(null);
       });
+    setShareForm({
+      title: truncate(activePrompt.task, 80),
+      description: truncate(activePrompt.task, 180),
+      category: 'Genel',
+    });
+    setShareStatus('');
   }, [activePrompt]);
 
   const filteredPrompts = useMemo(() => {
@@ -94,6 +104,29 @@ export function ProfilePage({ user }: { user: SessionUser }) {
       }
     } catch {
       // Keep UI stable; backend already returns guarded responses.
+    }
+  }
+
+  async function handleSharePrompt() {
+    if (!activePrompt) return;
+    if (!shareForm.title.trim() || !shareForm.description.trim() || !shareForm.category.trim()) {
+      setShareStatus('Baslik, aciklama ve kategori gerekli.');
+      return;
+    }
+
+    setSharing(true);
+    setShareStatus('Market kaydi hazirlaniyor...');
+    try {
+      await sharePrompt(activePrompt.id, {
+        title: shareForm.title.trim(),
+        description: shareForm.description.trim(),
+        category: shareForm.category.trim(),
+      });
+      setShareStatus('Prompt markette paylasildi.');
+    } catch (requestError) {
+      setShareStatus(requestError instanceof Error ? requestError.message : 'Prompt paylasilamadi.');
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -237,6 +270,36 @@ export function ProfilePage({ user }: { user: SessionUser }) {
                   <p className="version-note">Revizyon: {activeVersion.revision_instruction}</p>
                 ) : null}
                 {activeVersion?.generated_prompt || activePrompt.generated_prompt}
+              </div>
+            </div>
+            <div className="share-box">
+              <div className="panel-title">
+                <Upload size={16} /> Market Paylasimi
+              </div>
+              <input
+                className="text-field"
+                value={shareForm.title}
+                onChange={(event) => setShareForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="Market basligi"
+              />
+              <input
+                className="text-field"
+                value={shareForm.category}
+                onChange={(event) => setShareForm((current) => ({ ...current, category: event.target.value }))}
+                placeholder="Kategori"
+              />
+              <textarea
+                className="compact-textarea"
+                rows={3}
+                value={shareForm.description}
+                onChange={(event) => setShareForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder="Kisa aciklama"
+              />
+              <div className="actions">
+                <button className="btn btn-primary" type="button" onClick={handleSharePrompt} disabled={sharing}>
+                  <Upload size={16} /> Market'te Paylas
+                </button>
+                {shareStatus ? <span className="status">{shareStatus}</span> : null}
               </div>
             </div>
             <div className="modal-actions">

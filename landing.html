@@ -797,7 +797,7 @@
     /* SECTION 6: Fiyatlandırma */
     .pricing-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 2rem;
       align-items: stretch;
     }
@@ -1320,56 +1320,71 @@ Build a premium single-page landing page for SPF.
     <div class="container">
       <div class="section-header reveal">
         <h2 class="heading-section">Fiyatlandırma</h2>
-        <p>Her ihtiyaca uygun esnek planlar.</p>
+        <p>Kullandigin kadar ode: analiz, uretim ve revizyon krediyle calisir.</p>
       </div>
 
       <div class="pricing-grid">
+        <!-- Free -->
+        <div class="pricing-card reveal">
+          <div class="pricing-header">
+            <h3 class="pricing-title">Free</h3>
+            <div class="pricing-price">$0</div>
+            <div class="pricing-period">10 kredi, kredi karti gerekmez</div>
+          </div>
+          <ul class="pricing-features">
+            <li><i data-lucide="check" class="check"></i> Baslangic icin 10 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Prompt uretimi 5 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Analiz 1 kredi</li>
+          </ul>
+          <a href="/app" class="btn btn-ghost">Hemen Başla</a>
+        </div>
+
         <!-- Starter -->
         <div class="pricing-card reveal">
           <div class="pricing-header">
             <h3 class="pricing-title">Starter</h3>
-            <div class="pricing-price">Ücretsiz</div>
-            <div class="pricing-period">Süresiz, kredi kartı gerekmez</div>
+            <div class="pricing-price">$5</div>
+            <div class="pricing-period">50 kredi, tek seferlik paket</div>
           </div>
           <ul class="pricing-features">
-            <li><i data-lucide="check" class="check"></i> 10 prompt / gün</li>
-            <li><i data-lucide="check" class="check"></i> Temel skill registry</li>
-            <li><i data-lucide="check" class="check"></i> Topluluk desteği</li>
+            <li><i data-lucide="check" class="check"></i> 50 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Yaklasik 10 prompt uretimi</li>
+            <li><i data-lucide="check" class="check"></i> Context pack ucretsiz</li>
           </ul>
-          <a href="#" class="btn btn-ghost">Hemen Başla</a>
+          <a href="/app" class="btn btn-ghost">Paketi Seç</a>
         </div>
 
-        <!-- Pro -->
+        <!-- Builder -->
         <div class="pricing-card popular reveal">
           <div class="popular-badge">En Popüler</div>
           <div class="pricing-header">
-            <h3 class="pricing-title">Pro</h3>
-            <div class="pricing-price">$19</div>
-            <div class="pricing-period">Aylık faturalandırılır</div>
+            <h3 class="pricing-title">Builder</h3>
+            <div class="pricing-price">$12</div>
+            <div class="pricing-period">150 kredi, en iyi birim fiyat</div>
           </div>
           <ul class="pricing-features">
-            <li><i data-lucide="check" class="check"></i> Sınırsız prompt</li>
-            <li><i data-lucide="check" class="check"></i> Tam skill registry</li>
-            <li><i data-lucide="check" class="check"></i> Özel validator'lar</li>
-            <li><i data-lucide="check" class="check"></i> Öncelikli destek</li>
+            <li><i data-lucide="check" class="check"></i> 150 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Yaklasik 30 prompt uretimi</li>
+            <li><i data-lucide="check" class="check"></i> Revizyon 5 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Prompt gecmisi dahil</li>
           </ul>
-          <a href="#" class="btn btn-primary">Pro'ya Geç</a>
+          <a href="/app" class="btn btn-primary">Builder Al</a>
         </div>
 
-        <!-- Enterprise -->
+        <!-- Pro -->
         <div class="pricing-card reveal">
           <div class="pricing-header">
-            <h3 class="pricing-title">Enterprise</h3>
-            <div class="pricing-price">$99</div>
-            <div class="pricing-period">Aylık faturalandırılır</div>
+            <h3 class="pricing-title">Pro</h3>
+            <div class="pricing-price">$25</div>
+            <div class="pricing-period">400 kredi, yogun kullanim</div>
           </div>
           <ul class="pricing-features">
-            <li><i data-lucide="check" class="check"></i> API erişimi</li>
-            <li><i data-lucide="check" class="check"></i> Özel skill ekleme</li>
-            <li><i data-lucide="check" class="check"></i> SLA garantisi</li>
-            <li><i data-lucide="check" class="check"></i> Dedike destek</li>
+            <li><i data-lucide="check" class="check"></i> 400 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Yaklasik 80 prompt uretimi</li>
+            <li><i data-lucide="check" class="check"></i> Analiz 1 kredi</li>
+            <li><i data-lucide="check" class="check"></i> Context pack ucretsiz</li>
           </ul>
-          <a href="#" class="btn btn-ghost">Bize Ulaşın</a>
+          <a href="/app" class="btn btn-ghost">Pro Al</a>
         </div>
       </div>
     </div>

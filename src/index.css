@@ -129,6 +129,53 @@ button {
   gap: 12px;
 }
 
+.announcement-banner {
+  width: min(100% - 36px, 1120px);
+  margin: 14px auto 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.announcement-banner.success {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.announcement-banner.warning {
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.announcement-banner.danger {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.announcement-banner strong,
+.announcement-banner span {
+  display: block;
+}
+
+.announcement-banner span {
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -227,6 +274,32 @@ h2 {
   margin-inline: auto;
 }
 
+.credit-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.credit-strip span,
+.credit-balance {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.credit-balance {
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
 .factory-grid,
 .stats,
 .prompt-grid {
@@ -243,8 +316,140 @@ h2 {
   margin-bottom: 24px;
 }
 
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
 .prompt-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.market-featured,
+.market-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.market-featured {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.market-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-height: 270px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.92);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.24);
+}
+
+.market-card.featured {
+  min-height: 210px;
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.market-card-head,
+.market-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.market-card-head {
+  justify-content: space-between;
+}
+
+.market-card h2 {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.market-card p {
+  color: #e4e4e7;
+  line-height: 1.65;
+}
+
+.market-card small,
+.market-card-head small {
+  color: var(--text-secondary);
+}
+
+.market-card-head span,
+.market-metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.market-metrics {
+  padding-top: 4px;
+}
+
+.pricing-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.92);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pricing-card {
+  display: grid;
+  align-content: space-between;
+  gap: 14px;
+  min-height: 178px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pricing-card strong {
+  color: var(--text-primary);
+}
+
+.pricing-card p,
+.package-meta span {
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.package-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
 }
 
 .panel,
@@ -265,6 +470,10 @@ h2 {
 
 .panel {
   padding: 18px;
+}
+
+.admin-panel {
+  margin-bottom: 18px;
 }
 
 .panel-centered {
@@ -299,6 +508,12 @@ h2 {
   color: var(--text-secondary);
   font-size: 14px;
   font-weight: 800;
+}
+
+.stat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 textarea,
@@ -406,6 +621,147 @@ textarea {
 .muted {
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.admin-search {
+  max-width: 340px;
+}
+
+.admin-table {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.admin-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.6fr) minmax(80px, 0.5fr) minmax(80px, 0.5fr) minmax(80px, 0.5fr) minmax(130px, 0.8fr) minmax(360px, 1.8fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 980px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-row-head {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-row strong,
+.admin-row small {
+  display: block;
+}
+
+.admin-row small {
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.credit-input {
+  width: 96px;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text-primary);
+  padding: 0 10px;
+}
+
+.limit-input {
+  width: 116px;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text-primary);
+  padding: 0 10px;
+}
+
+.admin-note-input {
+  width: 150px;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text-primary);
+  padding: 0 10px;
+}
+
+.admin-management-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.admin-form-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.admin-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.admin-list-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-list-item p,
+.admin-list-item small {
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.credit-ledger {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.ledger-item {
+  display: grid;
+  gap: 6px;
+  min-height: 104px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ledger-item span,
+.ledger-item small {
+  color: var(--text-secondary);
 }
 
 .user-menu {
@@ -740,6 +1096,51 @@ textarea {
   color: #e4e4e7;
 }
 
+.share-box {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.share-box textarea {
+  margin-top: 0;
+}
+
+.market-comment-body {
+  display: grid;
+  gap: 16px;
+  white-space: normal;
+}
+
+.comment-compose,
+.comment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.comment-compose textarea {
+  margin-top: 0;
+}
+
+.comment-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.comment-item p {
+  color: #e4e4e7;
+}
+
+.comment-item small {
+  color: var(--text-secondary);
+}
+
 .spin {
   animation: spin 1s linear infinite;
 }
@@ -762,6 +1163,13 @@ textarea {
   }
 
   .factory-grid,
+  .pricing-grid,
+  .market-featured,
+  .market-grid,
+  .market-toolbar,
+  .admin-stats,
+  .admin-management-grid,
+  .credit-ledger,
   .stats,
   .prompt-grid {
     grid-template-columns: 1fr;

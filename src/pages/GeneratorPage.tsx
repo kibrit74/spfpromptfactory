@@ -1,5 +1,7 @@
 import {
+  BadgeDollarSign,
   Check,
+  Coins,
   Copy,
   FileText,
   LoaderCircle,
@@ -19,10 +21,12 @@ import {
   deleteContextPack,
   generatePrompt,
   getContextPacks,
+  getCredits,
   revisePrompt,
+  startCreditCheckout,
   updateContextPack,
 } from '../lib/api';
-import type { AuthConfig, ContextPack, PromptAnalysis, SessionUser } from '../lib/types';
+import type { AuthConfig, ContextPack, CreditSummary, PromptAnalysis, SessionUser } from '../lib/types';
 
 const emptyPackForm = {
   name: '',
@@ -42,6 +46,7 @@ export function GeneratorPage({
   const [promptId, setPromptId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<PromptAnalysis | null>(null);
   const [contextPacks, setContextPacks] = useState<ContextPack[]>([]);
+  const [credits, setCredits] = useState<CreditSummary | null>(null);
   const [selectedContextPackId, setSelectedContextPackId] = useState('');
   const [packForm, setPackForm] = useState(emptyPackForm);
   const [revisionInstruction, setRevisionInstruction] = useState('');
@@ -51,6 +56,10 @@ export function GeneratorPage({
   const [copied, setCopied] = useState(false);
 
   const runtimeBlocked = Boolean(config && !config.geminiConfigured);
+  const creditCosts = credits?.costs || { analyze: 1, generate: 5, revise: 5 };
+  const canAnalyze = !credits || credits.balance >= creditCosts.analyze;
+  const canGenerate = !credits || credits.balance >= creditCosts.generate;
+  const canRevise = !credits || credits.balance >= creditCosts.revise;
   const selectedContextPack = useMemo(
     () => contextPacks.find((pack) => pack.id === selectedContextPackId) || null,
     [contextPacks, selectedContextPackId],
@@ -60,6 +69,26 @@ export function GeneratorPage({
     getContextPacks()
       .then((result) => setContextPacks(result.context_packs))
       .catch(() => setContextPacks([]));
+    getCredits()
+      .then((result) => setCredits(result))
+      .catch(() => setCredits(null));
+
+    const marketPrompt = window.localStorage.getItem('spf_market_prompt');
+    if (marketPrompt) {
+      try {
+        const parsed = JSON.parse(marketPrompt) as { title?: string; prompt?: string };
+        if (parsed.prompt) {
+          setTask(parsed.title || '');
+          setPrompt(parsed.prompt);
+          setPromptId(null);
+          setStatus('Market promptu yuklendi. Isterseniz kopyalayabilir veya yeni prompt uretebilirsiniz.');
+        }
+      } catch {
+        // Ignore stale local storage payloads.
+      } finally {
+        window.localStorage.removeItem('spf_market_prompt');
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -94,6 +123,9 @@ export function GeneratorPage({
       const result = await generatePrompt(task.trim(), selectedContextPackId);
       setPrompt(result.prompt);
       setPromptId(result.prompt_id);
+      if (typeof result.credits_balance === 'number') {
+        setCredits((current) => (current ? { ...current, balance: result.credits_balance } : current));
+      }
       setStatus(result.prompt_id ? 'Prompt uretildi ve profilinize kaydedildi.' : 'Prompt uretildi.');
     } catch (requestError) {
       const message =
@@ -115,6 +147,9 @@ export function GeneratorPage({
     try {
       const result = await analyzePrompt(task.trim(), selectedContextPackId);
       setAnalysis(result.analysis);
+      if (typeof result.credits_balance === 'number') {
+        setCredits((current) => (current ? { ...current, balance: result.credits_balance } : current));
+      }
       setStatus('Analiz hazir.');
     } catch (requestError) {
       const message =
@@ -146,6 +181,9 @@ export function GeneratorPage({
       const result = await revisePrompt(promptId, revisionInstruction.trim(), selectedContextPackId);
       setPrompt(result.prompt);
       setAnalysis(result.analysis);
+      if (typeof result.credits_balance === 'number') {
+        setCredits((current) => (current ? { ...current, balance: result.credits_balance } : current));
+      }
       setRevisionInstruction('');
       setStatus(`Revizyon v${result.version.version_number} olarak kaydedildi.`);
     } catch (requestError) {
@@ -229,6 +267,37 @@ export function GeneratorPage({
     window.setTimeout(() => setCopied(false), 1400);
   }
 
+  async function handlePackage(packageId: string) {
+    setLoadingAction('pack');
+    setError(false);
+    setStatus('Kredi paketi kontrol ediliyor...');
+
+    try {
+      const result = await startCreditCheckout(packageId);
+      setCredits({
+        balance: result.balance,
+        costs: result.costs,
+        packages: result.packages,
+      });
+      setStatus(result.message);
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error ? requestError.message : 'Kredi paketi baslatilamadi.';
+      setError(true);
+      setStatus(message);
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  function formatPackagePrice(priceCents: number) {
+    if (priceCents === 0) return 'Free';
+    return `$${(priceCents / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
   return (
     <AppShell user={user}>
       <main className="shell">
@@ -238,7 +307,50 @@ export function GeneratorPage({
           <p className="subtitle">
             Gorevi yaz, baglam paketini sec, promptu analiz et ve surumlu revizyonlarla gelistir.
           </p>
+          <div className="credit-strip" aria-label="Kredi bakiyesi">
+            <div className="credit-balance">
+              <Coins size={18} />
+              <span>{credits ? `${credits.balance} kredi` : 'Kredi yukleniyor'}</span>
+            </div>
+            <span>Analiz {creditCosts.analyze} kredi</span>
+            <span>Prompt {creditCosts.generate} kredi</span>
+            <span>Revizyon {creditCosts.revise} kredi</span>
+          </div>
         </section>
+
+        {credits ? (
+          <section className="pricing-panel" aria-label="Kredi paketleri">
+            <div className="panel-head">
+              <div className="panel-title">
+                <BadgeDollarSign size={16} /> Kredi Paketleri
+              </div>
+              <span className="status">1 prompt = {creditCosts.generate} kredi</span>
+            </div>
+            <div className="pricing-grid">
+              {credits.packages.map((pack) => (
+                <article className="pricing-card" key={pack.id}>
+                  <div>
+                    <strong>{pack.name}</strong>
+                    <p>{pack.description}</p>
+                  </div>
+                  <div className="package-meta">
+                    <span>{pack.credits} kredi</span>
+                    <strong>{formatPackagePrice(pack.price_cents)}</strong>
+                  </div>
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    onClick={() => handlePackage(pack.id)}
+                    disabled={loadingAction === 'pack'}
+                  >
+                    {loadingAction === 'pack' ? <LoaderCircle size={16} className="spin" /> : <Coins size={16} />}
+                    {pack.price_cents === 0 ? 'Aktif' : 'Paketi Sec'}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="factory-grid" aria-label="SPF prompt uretici">
           <div className="panel">
@@ -319,7 +431,7 @@ export function GeneratorPage({
                 className="btn btn-ghost"
                 type="button"
                 onClick={handleAnalyze}
-                disabled={Boolean(loadingAction) || runtimeBlocked}
+                disabled={Boolean(loadingAction) || runtimeBlocked || !canAnalyze}
               >
                 {loadingAction === 'analyze' ? (
                   <LoaderCircle size={16} className="spin" />
@@ -332,7 +444,7 @@ export function GeneratorPage({
                 className="btn btn-primary"
                 type="button"
                 onClick={handleGenerate}
-                disabled={Boolean(loadingAction) || runtimeBlocked}
+                disabled={Boolean(loadingAction) || runtimeBlocked || !canGenerate}
               >
                 {loadingAction === 'generate' ? (
                   <LoaderCircle size={16} className="spin" />
@@ -381,7 +493,7 @@ export function GeneratorPage({
                 className="btn btn-primary"
                 type="button"
                 onClick={handleRevise}
-                disabled={Boolean(loadingAction) || !promptId}
+                disabled={Boolean(loadingAction) || !promptId || !canRevise}
               >
                 {loadingAction === 'revise' ? <LoaderCircle size={16} className="spin" /> : <RefreshCw size={16} />}
                 Revize Et

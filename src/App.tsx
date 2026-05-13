@@ -3,8 +3,10 @@ import { LoaderCircle } from 'lucide-react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { getAuthConfig, getSession } from './lib/api';
 import type { AuthConfig, SessionUser } from './lib/types';
+import { AdminPage } from './pages/AdminPage';
 import { GeneratorPage } from './pages/GeneratorPage';
 import { LoginPage } from './pages/LoginPage';
+import { MarketPage } from './pages/MarketPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ProfilePage } from './pages/ProfilePage';
 
@@ -64,6 +66,20 @@ export default function App() {
       <Route
         path="/profile"
         element={user ? <ProfilePage user={user} /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/market"
+        element={user ? <MarketPage user={user} /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/admin"
+        element={
+          user?.is_admin ? (
+            <AdminPage user={user} />
+          ) : (
+            <Navigate to={user ? '/profile' : '/login'} replace />
+          )
+        }
       />
       <Route path="/" element={<Navigate to={user ? '/profile' : '/login'} replace />} />
       <Route path="*" element={<NotFoundPage user={user} />} />
