@@ -48,3 +48,27 @@ export function applyMarketUserState(items = [], stars = [], saves = []) {
     saved_by_user: savedIds.has(item.id),
   }));
 }
+
+export function isMarketSchemaMissing(error) {
+  const message = String(error?.message || '');
+  return (
+    message.includes("Could not find the table 'public.prompt_market_items'") ||
+    message.includes("Could not find the table 'public.prompt_market_") ||
+    message.includes('relation "public.prompt_market_items" does not exist')
+  );
+}
+
+export function normalizeMarketSchemaError(error) {
+  if (!isMarketSchemaMissing(error)) return error;
+
+  return Object.assign(
+    new Error(
+      'Prompt Market veritabani tablolari eksik. supabase_migration.sql icindeki prompt_market_* migration bolumunu calistirin.',
+    ),
+    {
+      status: 503,
+      code: 'market_schema_missing',
+      cause: error,
+    },
+  );
+}

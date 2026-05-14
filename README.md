@@ -28,4 +28,4 @@ SESSION_SECRET=
 
 ## Stack
 
-Node.js, Express, Gemini 2.5 Pro, Supabase, Google OAuth
+Node.js, Express, Gemini 3 Pro, Supabase, Google OAuth

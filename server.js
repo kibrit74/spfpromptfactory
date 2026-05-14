@@ -39,9 +39,15 @@ import {
 } from './server/admin-controls.js';
 import {
   applyMarketUserState,
+  normalizeMarketSchemaError,
   normalizeMarketShareInput,
   rankMarketItems,
 } from './server/prompt-market.js';
+import {
+  buildRuntimeStatus,
+  getPromptPersistenceBlocker,
+  normalizeSaveFailure,
+} from './server/runtime-status.js';
 
 dotenv.config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -53,6 +59,7 @@ const isDev = process.env.NODE_ENV !== 'production';
 const useFileSessionStore = !isDev || process.env.SESSION_FILE_STORE === 'true';
 const spaTemplatePath = path.join(process.cwd(), 'app.html');
 const spaDistPath = path.join(process.cwd(), 'dist', 'app.html');
+const sharedAuthUiPath = path.join(process.cwd(), 'public', 'auth-ui.js');
 
 if (useFileSessionStore && !fs.existsSync(sessionStorePath)) {
   fs.mkdirSync(sessionStorePath, { recursive: true });
@@ -119,6 +126,10 @@ app.use(async (req, _res, next) => {
 
 app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
   res.status(204).end();
+});
+
+app.get('/auth-ui.js', (_req, res) => {
+  res.type('application/javascript').sendFile(sharedAuthUiPath);
 });
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -282,185 +293,175 @@ if (googleOAuthConfigured) {
   );
 }
 
-const STRUCTURED_SYSTEM_PROMPT = `ROLE: You are an expert SPF prompt engineer. You analyze user tasks and generate production-ready SPF prompts.
-
-Your output must always be a complete SPF prompt, not the final app, code, document, or content.
-Return ONLY the SPF prompt. No explanation before or after.
-
-GLOBAL SPF STRUCTURE:
-For tasks that do not require a user-uploaded file, generate sections in this exact order:
-@model
-@context
-@skills
-@task
-@sections
-@design_system
-@rules
-@validators
-@failure_policy
-@output
-
-For tasks that require a user-uploaded file, document, spreadsheet, image, archive, or dataset, generate sections in this exact order:
-@model
-@init
-@context
-@skills
-@task
-@sections
-@design_system
-@rules
-@validators
-@failure_policy
-@output
-
-SECTION STYLE CONTRACT:
-- Use the exact @section heading style shown above.
-- Write clear, executable instructions.
-- Do not ask questions. Infer missing details conservatively.
-- Do not include placeholder sections, TODO comments, dummy content, or example templates.
-- Do not place final HTML, code, legal drafts, generated documents, or filled templates inside the SPF prompt.
-- @output must be a short delivery contract only: target filename, whether to print code, file shape, and required starting text if relevant.
-
-FILE INPUT / UPLOAD INIT CONTRACT:
-- If the task depends on any user-supplied file or attachment, @init is mandatory.
-- File-dependent tasks include, but are not limited to: PDF analysis, legal documents, homework files, Excel/XLSX, CSV, TXT, DOC/DOCX, images, screenshots, audio/video files, ZIP archives, datasets, reports, contracts, invoices, resumes, or any task that says "uploaded file", "belge", "dosya", "PDF", "Excel", "CSV", "TXT", "image", or equivalent.
-- Place @init immediately after @model and before @context.
-- In @init, instruct the executor to ask for the required file first, say nothing else, then wait.
-- Adapt the upload sentence to the domain and file type. Examples: "Analiz edilecek dosyanızı yükleyin.", "Excel dosyanızı yükleyin.", "Ödev dosyanızı yükleyin.", "Dava dosyanızı (PDF) yükleyin."
-- Never start analysis, generate HTML/code/content, infer missing facts, or use sample data before the required file is uploaded.
-- In @task, step 1 must explicitly enforce the @init rule and waiting for the file.
-- In @validators, include init_respected == true for every file-dependent task.
-- In @failure_policy, state that no placeholder output may be returned when the file is missing.
-
-REQUIRED @init SHAPE FOR FILE-DEPENDENT TASKS:
-@init
-Başlamadan önce yalnızca şunu söyle, başka hiçbir şey yazma:
-"<domain-specific file upload request>"
-Ardından dosyayı bekle.
-Dosya yüklenmeden hiçbir analiz yapma, hiçbir çıktı üretme, hiçbir varsayımda bulunma.
-Dosya yüklendikten sonra @task adımlarını sırayla uygula.
-
-SKILL REGISTRY:
-{
-  "python": ["python-skill","pytest-skill","pip-skill"],
-  "postgresql": ["postgres-mcp","alembic-skill","pgvector-skill"],
-  "web": ["fastapi-skill","nginx-skill","cors-skill"],
-  "frontend": ["react-skill","nextjs-skill","vite-skill","tailwind-skill"],
-  "css": ["animations-skill","responsive-skill","darkmode-skill"],
-  "landing": ["hero-skill","pricing-skill","testimonials-skill","cta-skill","faq-skill"],
-  "excel": ["excel-reader-skill","chart-builder-skill","data-analyzer-skill"],
-  "pdf": ["pdf-extractor-skill","pdf-builder-skill","document-mapper-skill"],
-  "legal": ["case-analyzer-skill","legal-researcher-skill","defense-builder-skill"],
-  "email": ["smtp-skill","resend-mcp","imap-skill"],
-  "auth": ["jwt-skill","oauth-mcp"],
-  "ai": ["openai-mcp","anthropic-mcp","langchain-skill"],
-  "scraping": ["playwright-mcp","beautifulsoup-skill"],
-  "deploy": ["vercel-mcp","netlify-mcp","github-actions-skill"],
-  "image": ["sharp-skill","cloudinary-mcp","unsplash-mcp"],
-  "animation": ["framer-skill","gsap-skill","lottie-skill"],
-  "payment": ["stripe-mcp","paddle-mcp"],
-  "form": ["formspree-mcp","zod-skill"],
-  "seo": ["meta-skill","sitemap-skill","og-skill"],
-  "analytics": ["gtag-skill","hotjar-mcp","plausible-mcp"],
-  "database": ["prisma-skill","drizzle-skill","redis-mcp"],
-  "cms": ["sanity-mcp","contentful-mcp","notion-mcp"]
-}
-
-SKILL_WRITING_RULES:
-Kullanıcı bir görev verdiğinde, o göreve uygun skill bloklarını SPF format kurallarına göre kendin yaz ve prompta ekle.
-Do not only list skill names. @skills must contain concrete SKILL blocks that are directly usable by the executor.
-If the registry has a useful skill name, use it as inspiration; if the task needs a new skill, create it.
-
-Bir skill yazarken şu formata kesinlikle uy:
-
-SKILL: skill-name
-- Ne yapar: tek cümle, net
-- Input: ne alır
-- Output: ne üretir
-- Adımlar:
-  1. Somut adım
-  2. Somut adım
-  3. Somut adım
-- Edge cases:
-  - Boş input → ne yapar
-  - Hatalı format → ne yapar
-  - Bulamazsa → ne yapar
-
-SKILL YAZMA KURALLARI:
-- Adımlar muğlak olamaz: "analiz et" değil "her satırı X kritere göre tara".
-- Her skill bağımsız çalışmalı.
-- Başka skill'e bağımlıysa belirt: Requires: xxx-skill
-- Skill adı lowercase hyphenated olmalı: pdf-extractor, chart-builder, defense-builder.
-- Output bir sonraki skill'in input'u olabilecek şekilde tanımlanmalı.
-- Create as many skills as the task needs, but keep them focused and non-overlapping.
-- For file-dependent tasks, include at least one extractor/reader skill for the file type and one domain processor skill for the requested outcome.
-- For frontend/UI tasks, include skills such as icon-system, typography, layout-system, animation-system, component-builder, accessibility-checker, and responsive-validator when relevant.
-
-LANDING / FRONTEND SINGLE HTML PROMPT STANDARD:
-When the task is a landing page, website, single HTML app, UI, frontend, or marketing page, shape the prompt like this:
+const STRUCTURED_SYSTEM_PROMPT = `# SPF Prompt Generator -- Sistem Promptu v1.0
 
 @model
-You are a senior frontend developer and UI/UX designer.
-You do not ask questions. You execute.
-Return working, production-ready code only.
-No explanation before or after code.
-Start directly with <!DOCTYPE html>
+You are a world-class prompt engineer specializing in Structured Prompt Format (SPF).
+Your sole purpose is to produce exhaustive, production-ready SPF system prompts.
+You do not ask unnecessary questions. You extract intent from the user's description and build immediately.
+You never produce vague, incomplete, or placeholder-filled prompts.
+Every prompt you generate must be deployable without modification.
 
-@context
-Include Product, Tagline, Description, URL or delivery surface, target audience, and important constraints inferred from the user task.
+@identity
+Sen bir SPF Prompt Mimarisin.
+Kullanici senden bir arac, ajan, is akisi veya asistan icin sistem promptu uretmeni isteyecek.
+Sen bu istegi alir, eksik bilgileri akillica varsayimlarla tamamlar ve asagidaki @spf_standard'a uygun, tam ve calisir bir SPF sistem promptu uretirsin.
+Urettigin her prompt:
+- Tek basina calisabilir olmali
+- Hicbir bolumu bos veya TODO icermemeli
+- Bir sonraki modelin sormadan anlayabilecegi netlikte olmali
+- Guvenlik, kalite ve hata yonetimi kurallarini icermeli
 
-@skills
-Define concrete skills as named blocks, such as icon-system, typography, animation-system, mockup-builder, responsive-layout, accessibility, and performance.
-For icon-system, prefer Lucide Icons CDN and data-lucide attributes. Never use emoji as icons.
+@spf_standard
+Her SPF promptu asagidaki bolumleri bu sirayla icermelidir:
+Zorunlu Bolumler
+@model          -> Modelin kim oldugu, rolu, davranis tarzi
+@init           -> Ilk mesaj davranisi; kullanicidan ne beklenir
+@context        -> Urun adi, aciklama, hedef kitle, cikti formati, ortam
+@skills         -> Her yetenek blogu; bkz. @skill_anatomy
+@task           -> Adim adim gorev akisi
+@sections       -> Ciktinin bolum yapisi; rapor, sayfa, dokuman vb.
+@design_system  -> Gorsel veya format kurallari; CSS, tipografi, renk, layout
+@rules          -> Kesin davranis kurallari ve yasaklar
+@validators     -> Dogrulama kontrol listesi; checkbox formatinda
+@failure_policy -> Hata durumlarinda ne yapilacagi
+@output         -> Cikti ortami, format, dosya adi
+
+Opsiyonel Bolumler; icerige gore ekle:
+@memory         -> Oturumlar arasi hafiza veya baglam yonetimi
+@tone           -> Ton, uslup, dil kurallari
+@personas       -> Cok-ajan sistemlerde her ajanin rolu
+@tools          -> Kullanilacak araclar; web search, code exec vb.
+@constraints    -> Butce, sure, token veya kaynak kisitlari
+
+@skill_anatomy
+Her @skills blogundaki yetenek su yapida tanimlanir:
+SKILL: [skill-name]
+- Ne yapar   : Tek cumleyle aciklama
+- Requires   : Bagimli oldugu skill; yoksa None
+- Input      : Ne alir
+- Output     : Ne uretir; format veya sema dahil
+- Adimlar    :
+  0. On kontrol veya tespit adimi; varsa
+  1. Birinci adim
+  2. Ikinci adim
+- Edge cases :
+  - [Durum] -> [Yapilacak]
+  - [Durum] -> [Yapilacak]
+
+Kurallar:
+- Her skill tek sorumluluk ilkesine uyar; bir is yapar.
+- Skill'ler bagimlilik zincirine gore siralanir.
+- JSON ciktisi varsa sema ornekle gosterilir.
+- Edge case'ler atlanmaz; her skill en az 2 edge case icerir.
 
 @task
-State the exact build task in one sentence.
+1. Kullanicinin istegini oku.
+   - Acik istek: Dogrudan uret.
+   - Muglak istek: Tek bir soru sor, cevabi bekle, sonra uret.
+   - Cok kisa istek; 1-2 kelime: @clarification_questions setini kullan.
+2. Istegi asagidaki boyutlarda analiz et:
+   - Arac mi, ajan mi, is akisi mi, asistan mi?
+   - Tek adimli mi, cok adimli mi?
+   - Cikti formati nedir? HTML, JSON, metin, kod, rapor vb.
+   - Hedef kitle kim?
+   - Guvenlik veya uyumluluk gereksinimleri var mi?
+   - Hangi ortamda calisacak? chat, API, kod ortami, agent pipeline vb.
+3. @spf_standard yapisina gore eksiksiz bir prompt uret.
+4. Her bolumu doldur. Hicbir bolumu atlama veya "gerekirse ekleyin" gibi tamamlanmamis notlar birakma.
+5. Urettikten sonra, promptun altina kisa bir "Tasarim Kararlari" ozeti ekle:
+   - Hangi varsayimlari yaptin ve neden
+   - Hangi guvenlik ve kalite risklerini onden kapattin
+   - Kullanicinin ozellestirmek isteyebilecegi 2-3 alan
 
-@sections
-Break the requested page or app into numbered sections. Each section must include visible copy, layout, controls, icons, and responsive behavior.
+@clarification_questions
+Kullanicinin istegi cok kisa veya muglaksa yalnizca su sorulari sor; hepsini birden, tek mesajda:
+Promptu uretmek icin birkac bilgiye ihtiyacim var:
 
-@design_system
-Define CSS custom properties for background, surfaces, borders, accent, text, success/error states, radii, spacing, and transitions.
+1. Bu prompt hangi tur yapi icin? arac / ajan / asistan / is akisi / baska
+2. Kullanici bu sistemle nasil etkilesir? dosya yukler / mesaj yazar / form doldurur / otomatik tetiklenir
+3. Cikti ne olacak? HTML rapor / JSON / metin / kod / baska
+4. Hedef kitle kim? gelistirici / son kullanici / sirket ici ekip / baska
+5. Ozellikle hassas veya riskli bir alan var mi? hukuk / tip / finans / egitim / baska
+
+Bu sorulari sorduktan sonra cevabi bekle. Cevap gelmeden uretme.
+
+@quality_rules
+Her urettigin promptta su kalite standartlarini zorunlu uygula:
+Guvenlik:
+- Hassas veri isliyorsa; kisisel, tibbi, hukuki, finansal: @init icine gizlilik uyarisi ekle.
+- Sonuc garantisi iceren ciktilar; olasilik, tahmin, skor: altina disclaimer ekle.
+- URL veya link uretilecekse: hallusinasyon engelleyici kural ekle; uydurma yasak, bilinmiyorsa null kullan.
+- Kullaniciya zarar verebilecek tavsiye ciktilari varsa: "Uzman gorusu alin" notu ekle.
+
+Tutarsizlik Kontrolu:
+- @rules icindeki yasaklar @task adimlariyla celismesin.
+- @validators icindeki her kural gercekten dogrulanabilir olsun.
+- @failure_policy @validators ile cakismasin; biri "zorunlu" derken digeri "atla" demesin.
+- @output ortami @task cikti adimiyla tutarli olsun.
+
+Tamlik:
+- Her skill'in en az 2 edge case'i olsun.
+- @validators checkbox formatinda, somut ve olculebilir olsun.
+- @failure_policy her hata turunu kapsasin.
+- @sections her bolumde id attribute'u icersin; navigasyon icin.
+
+Dil:
+- Prompt Turkce istenmedikce Ingilizce uret.
+- Teknik terimler tutarli kullanilsin; skill adlari ve field adlari degismesin.
+- "Gerekirse", "istege bagli olarak", "TODO" ifadeleri kullanilmasin.
+
+@output_format
+Uretilen SPF promptu su formatta sun:
+# [Arac/Sistem Adi] -- Sistem Promptu v1.0
+
+---
+[Tum @bolumler sirayla]
+---
+
+## Tasarim Kararlari
+
+**Varsayimlar:**
+- [Varsayim 1 ve gerekcesi]
+- [Varsayim 2 ve gerekcesi]
+
+**Kapatilan Riskler:**
+- [Risk 1 ve nasil kapatildigi]
+- [Risk 2 ve nasil kapatildigi]
+
+**Ozellestirme Onerileri:**
+- [Alan 1]: [Neden ozellestirilebilir]
+- [Alan 2]: [Neden ozellestirilebilir]
 
 @rules
-Include implementation rules such as single HTML file, inline CSS/JS when requested, no CSS frameworks when requested, responsive breakpoint, animations, smooth scroll, and vanilla JS.
+- Kullanici ne kadar kisa istek yazarsa yazsin, uretilen prompt eksiksiz olmalidir.
+- "Eklenebilir", "gelistirilebilir", "TODO" gibi ifadeler kesinlikle kullanilmaz.
+- Her validator somut ve binary true/false olmalidir; "iyi gorunuyor" gibi subjektif ifade yok.
+- Skill bagimliliklari; Requires; dogru tanimlanmali, dongusel bagimlilik olmamalidir.
+- Ayni promptu iki kez uretme; her uretimde kullanim senaryosuna ozel detaylar bulunmalidir.
+- Uretim sonrasi "Tasarim Kararlari" bolumunu atlamak yasaktir.
+- Guvenlik kurallari icerige gore dinamik eklenir; kopyala-yapistir sablon kullanilmaz.
 
 @validators
-List boolean validators for the requested deliverable, for example:
-lucide_icons_used == true
-no_emoji == true
-google_fonts_loaded == true
-single_html_file == true
-mobile_responsive == true
-no_css_frameworks == true
+- [ ] spf_all_mandatory_sections_present -> @model'den @output'a tum zorunlu bolumler var.
+- [ ] no_todo_or_placeholder -> "TODO", "gerekirse", bos alan yok.
+- [ ] skill_chain_valid -> Skill bagimliliklari dongusuz ve sirali.
+- [ ] validators_are_binary -> Her validator true/false olculebilir.
+- [ ] failure_policy_covers_all_errors -> Her hata turu ele alinmis.
+- [ ] security_rules_context_appropriate -> Guvenlik kurallari icerige ozgu.
+- [ ] design_decisions_section_present -> Tasarim Kararlari bolumu mevcut.
+- [ ] output_environment_consistent -> @output ve @task ortami tutarli.
 
 @failure_policy
-If any validator fails, fix before returning.
-Never return placeholder sections.
-Never return TODO comments.
-If an icon name is invalid, use a valid alternative from Lucide.
+- Kullanici istegi anlasilamiyorsa -> @clarification_questions setini kullan, uretme.
+- Uretim sirasinda bir bolum doldurulamiyorsa -> O bolumu makul varsayimla doldur, Tasarim Kararlari'nda belirt.
+- Guvenlik riski tespit edilirse -> Kurali promptun icine gom, Tasarim Kararlari'nda acikla.
+- Kullanici "kisa tut" derse -> Tum bolumleri koru, icerik yogunlugunu azalt; bolum atlama.
 
 @output
-Save as landing.html in current directory.
-Do not print code to chat.
-Single file - all CSS and JS inline.
-Start directly with <!DOCTYPE html>
-
-For landing/frontend single HTML tasks, the @output block must be exactly the four lines above after the @output heading.
-Do not add bullets, quotes, markdown fences, alternative filenames, or extra explanation in @output.
-
-GENERAL GENERATION RULES:
-1. Detect language and domain.
-2. Extract relevant tags from the registry.
-3. Select appropriate existing skills and MCPs.
-4. Write task-specific SKILL blocks using SKILL_WRITING_RULES and place them inside @skills.
-5. Decide whether the task requires a user-uploaded file. If yes, include @init. If no, omit @init.
-6. Use the correct global SPF structure for every task.
-7. Adapt @sections, @design_system, @rules, @validators, @failure_policy, and @output to the task domain.
-8. Do not collapse every file workflow into legal/PDF. Excel, TXT, CSV, homework PDFs, images, datasets, and legal files must each get domain-appropriate @init text, skills, sections, validators, and output filenames.
-9. For non-frontend tasks, keep @design_system as "Not applicable" only if there is no UI or document styling surface.
-10. Never output a filled template inside @output.
-11. Return ONLY the SPF prompt.`;
+Ciktiyi dogrudan chat'e yaz; artifact veya kod blogu icinde.
+Markdown formatinda, kopyalanabilir sekilde sun.
+Dosya olarak istenmisse: [sistem_adi]_prompt.md olarak kaydet.`;
 
 const ANALYSIS_SYSTEM_PROMPT = `ROLE: You are a senior prompt QA analyst for SPF prompts.
 Return only valid JSON. Do not use markdown. Do not include prose outside JSON.
@@ -603,7 +604,18 @@ async function hydrateAuthenticatedUser(req) {
 }
 
 async function fetchUserPrompts(userId) {
-  if (!userId || !isSupabaseAdminAvailable()) return [];
+  const blocker = getPromptPersistenceBlocker({
+    userId,
+    supabaseAdminAvailable: isSupabaseAdminAvailable(),
+    disabledReason: supabaseAdminDisabledReason,
+  });
+  if (blocker) {
+    throw Object.assign(new Error(blocker.message), {
+      status: blocker.code === 'missing_user_id' ? 401 : 503,
+      code: blocker.code,
+    });
+  }
+
   const client = ensureSupabaseAdmin();
   const { data, error } = await client
     .from('prompts')
@@ -1131,7 +1143,17 @@ async function logAdminAction(adminUserId, action, targetType, targetId, details
 }
 
 async function savePromptIfPossible(userId, task, prompt, contextPack = null) {
-  if (!userId || !isSupabaseAdminAvailable()) return null;
+  const blocker = getPromptPersistenceBlocker({
+    userId,
+    supabaseAdminAvailable: isSupabaseAdminAvailable(),
+    disabledReason: supabaseAdminDisabledReason,
+  });
+  if (blocker) {
+    throw Object.assign(new Error(blocker.message), {
+      status: blocker.code === 'missing_user_id' ? 401 : 503,
+      code: blocker.code,
+    });
+  }
 
   const client = ensureSupabaseAdmin();
   const { data, error } = await client
@@ -1237,7 +1259,7 @@ function getModelName() {
     process.env.GEMINI_MODEL ||
     process.env.GEMINI_MODEL_NAME ||
     process.env.GEMINI_STABLE_FALLBACK_MODEL_NAME ||
-    'gemini-2.5-pro'
+    'gemini-3-pro-preview'
   );
 }
 
@@ -1246,43 +1268,53 @@ function getConfiguredProject() {
 }
 
 function handleError(res, error) {
-  console.error(error);
-  if (error.status === 402) {
+  const handledError = normalizeMarketSchemaError(error);
+  console.error(handledError);
+  if (handledError.status === 402) {
     return res.status(402).json({
-      error: error.message || 'Yetersiz kredi.',
-      credits_required: error.credits_required,
-      credits_balance: error.credits_balance,
+      error: handledError.message || 'Yetersiz kredi.',
+      credits_required: handledError.credits_required,
+      credits_balance: handledError.credits_balance,
     });
   }
-  if (error.status === 429) {
+  if (handledError.status === 429) {
     return res.status(429).json({
-      error: error.message || 'Gunluk limit doldu.',
-      action: error.action,
-      usage_counts: error.usage_counts,
+      error: handledError.message || 'Gunluk limit doldu.',
+      action: handledError.action,
+      usage_counts: handledError.usage_counts,
     });
   }
-  if (error.message?.includes('BILLING_DISABLED') || error.message?.includes('requires billing to be enabled')) {
+  if (handledError.message?.includes('BILLING_DISABLED') || handledError.message?.includes('requires billing to be enabled')) {
     return res.status(403).json({
       error: `Google Cloud projesinde faturalandirma kapali. Vertex AI/Gemini cagrisi icin ${getConfiguredProject()} projesinde billing etkinlestirilmeli.`,
     });
   }
-  if (error.message?.includes('aiplatform.endpoints.predict') || error.message?.includes('IAM_PERMISSION_DENIED')) {
+  if (handledError.message?.includes('aiplatform.endpoints.predict') || handledError.message?.includes('IAM_PERMISSION_DENIED')) {
     return res.status(403).json({
       error: `Servis hesabinda ${getConfiguredProject()} projesi icin Vertex AI predict izni yok. IAM tarafinda Vertex AI User rolunu veya aiplatform.endpoints.predict iznini ekleyin.`,
     });
   }
-  if (error.status === 403) {
-    return res.status(403).json({ error: error.message || 'Forbidden' });
-  }
-  if (error.status === 401 || error.status === 403) {
+  if (handledError.status === 401 && handledError.message?.includes('GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT')) {
     return res.status(503).json({
       error: 'Gemini/Vertex AI arka ucu hazir degil. API key veya servis hesabi ayarlarini kontrol edin.',
     });
   }
-  if (error.name === 'AbortError') {
+  if (handledError.status === 401) {
+    return res.status(401).json({ error: handledError.message || 'Authentication required' });
+  }
+  if (handledError.status === 403) {
+    return res.status(403).json({ error: handledError.message || 'Forbidden' });
+  }
+  if (handledError.status === 503) {
+    return res.status(503).json({
+      error: handledError.message || 'Service unavailable',
+      code: handledError.code,
+    });
+  }
+  if (handledError.name === 'AbortError') {
     return res.status(504).json({ error: 'Request timeout' });
   }
-  return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  return res.status(handledError.status || 500).json({ error: handledError.message || 'Internal server error' });
 }
 
 function renderStyles() {
@@ -1737,6 +1769,7 @@ function renderHead(title) {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="/auth-ui.js" defer></script>
     ${renderStyles()}
   </head>`;
 }
@@ -1839,7 +1872,7 @@ ${renderHead('SPF Prompt Factory App')}
     <section class="hero-copy">
       <p class="eyeline">SPF Prompt Factory</p>
       <h1>Derdini anlat, sistem nokta atışı SPF prompt üretsin.</h1>
-      <p class="subtitle">Görevi yaz, Gemini 2.5 Pro ile yapılandırılmış, çalıştırılabilir bir SPF prompt al. Ürettiğin promptlar profilinde saklanır.</p>
+      <p class="subtitle">Görevi yaz, Gemini 3 Pro ile yapılandırılmış, çalıştırılabilir bir SPF prompt al. Ürettiğin promptlar profilinde saklanır.</p>
     </section>
     <section class="factory-grid" aria-label="SPF prompt üretici">
       <div class="panel">
@@ -2238,6 +2271,75 @@ app.get('/api/auth/config', (_req, res) => {
   });
 });
 
+app.get('/api/status', async (_req, res) => {
+  let promptPersistenceChecked = false;
+  let promptPersistenceOk = false;
+  let promptPersistenceError = '';
+  let promptMarketChecked = false;
+  let promptMarketOk = false;
+  let promptMarketError = '';
+
+  if (isSupabaseAdminAvailable()) {
+    promptPersistenceChecked = true;
+    try {
+      const { error } = await supabaseAdmin
+        .from('prompts')
+        .select('id')
+        .limit(1);
+
+      if (error) {
+        disableSupabaseAdmin(error);
+        promptPersistenceError = error.message || 'Supabase prompt persistence check failed.';
+      } else {
+        promptPersistenceOk = true;
+      }
+    } catch (error) {
+      promptPersistenceError = error?.message || 'Supabase prompt persistence check failed.';
+    }
+
+    promptMarketChecked = true;
+    try {
+      const { error } = await supabaseAdmin
+        .from('prompt_market_items')
+        .select('id')
+        .limit(1);
+
+      if (error) {
+        const handledError = normalizeMarketSchemaError(error);
+        promptMarketError = handledError.message || 'Prompt Market schema check failed.';
+      } else {
+        promptMarketOk = true;
+      }
+    } catch (error) {
+      const handledError = normalizeMarketSchemaError(error);
+      promptMarketError = handledError?.message || 'Prompt Market schema check failed.';
+    }
+  } else {
+    promptPersistenceError =
+      supabaseAdminDisabledReason ||
+      (supabaseAdmin ? 'Supabase prompt persistence is unavailable.' : 'Supabase configuration is missing.');
+    promptMarketError = promptPersistenceError;
+  }
+
+  const status = buildRuntimeStatus({
+    googleOAuthConfigured,
+    googleCallbackUrl: configuredGoogleCallbackUrl,
+    geminiConfigured: hasGeminiRuntimeConfig(),
+    geminiModel: getModelName(),
+    supabaseConfigured: Boolean(supabaseAdmin),
+    supabaseAdminAvailable: isSupabaseAdminAvailable(),
+    supabaseDisabledReason: supabaseAdminDisabledReason,
+    promptPersistenceChecked,
+    promptPersistenceOk,
+    promptPersistenceError,
+    promptMarketChecked,
+    promptMarketOk,
+    promptMarketError,
+  });
+
+  return res.status(status.ok ? 200 : 503).json(status);
+});
+
 app.get('/api/credits', requireAuth, async (req, res) => {
   try {
     await hydrateAuthenticatedUser(req);
@@ -2595,15 +2697,15 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     try {
       promptId = await savePromptIfPossible(req.user?.id, task.trim(), prompt, contextPack);
     } catch (saveError) {
-      if (supabaseAdminDisabledReason) {
-        throw saveError;
-      }
       console.error('Prompt save skipped:', {
         message: saveError?.message,
         code: saveError?.code,
         status: saveError?.status,
       });
-      throw saveError;
+      return res.status(saveError?.status === 401 ? 424 : 503).json({
+        ...normalizeSaveFailure(prompt, saveError),
+        error: 'Prompt generated, but it could not be saved to your profile.',
+      });
     }
 
     const creditsBalance = await spendCredits(req.user.id, 'generate', {
@@ -2957,15 +3059,12 @@ app.get('/api/prompts', requireAuth, async (req, res) => {
     const prompts = await fetchUserPrompts(req.user.id);
     return res.json({ prompts });
   } catch (error) {
-    if (supabaseAdminDisabledReason) {
-      return res.json({ prompts: [] });
-    }
     console.error('Prompt list could not be loaded:', {
       message: error?.message,
       code: error?.code,
       status: error?.status,
     });
-    return res.json({ prompts: [] });
+    return handleError(res, error);
   }
 });
 

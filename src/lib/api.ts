@@ -172,7 +172,13 @@ export async function startCreditCheckout(packageId: string) {
 }
 
 export async function generatePrompt(task: string, contextPackId?: string) {
-  return requestJson<{ prompt: string; prompt_id: string | null; credits_balance?: number }>('/api/generate', {
+  return requestJson<{
+    prompt: string;
+    prompt_id: string | null;
+    credits_balance?: number;
+    save_status?: 'saved' | 'failed';
+    save_error?: string;
+  }>('/api/generate', {
     method: 'POST',
     body: JSON.stringify({ task, context_pack_id: contextPackId || null }),
   });

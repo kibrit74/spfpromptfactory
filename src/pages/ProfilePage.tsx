@@ -38,11 +38,22 @@ export function ProfilePage({ user }: { user: SessionUser }) {
   const [shareForm, setShareForm] = useState({ title: '', description: '', category: 'Genel' });
   const [shareStatus, setShareStatus] = useState('');
   const [sharing, setSharing] = useState(false);
+  const [promptLoadError, setPromptLoadError] = useState('');
 
   useEffect(() => {
     getPrompts()
-      .then((result) => setPrompts(result.prompts))
-      .catch(() => setPrompts([]));
+      .then((result) => {
+        setPrompts(result.prompts);
+        setPromptLoadError('');
+      })
+      .catch((requestError) => {
+        setPrompts([]);
+        setPromptLoadError(
+          requestError instanceof Error
+            ? requestError.message
+            : 'Kayitli promptlar yuklenemedi.',
+        );
+      });
   }, []);
 
   useEffect(() => {
@@ -172,6 +183,7 @@ export function ProfilePage({ user }: { user: SessionUser }) {
             <h2>Kayıtlı Promptlarım</h2>
             <span className="badge">{filteredPrompts.length} prompt</span>
           </div>
+          {promptLoadError ? <p className="status error">{promptLoadError}</p> : null}
           <div className="search-row">
             <label className="search-field">
               <Search size={16} />

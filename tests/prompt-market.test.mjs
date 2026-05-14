@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   applyMarketUserState,
+  isMarketSchemaMissing,
   normalizeMarketShareInput,
+  normalizeMarketSchemaError,
   rankMarketItems,
 } from '../server/prompt-market.js';
 
@@ -67,4 +69,14 @@ test('applyMarketUserState flags starred and saved prompts for current user', ()
   assert.equal(items[0].saved_by_user, true);
   assert.equal(items[1].starred_by_user, true);
   assert.equal(items[1].saved_by_user, false);
+});
+
+test('market schema cache errors are converted to an actionable setup error', () => {
+  const rawError = new Error("Could not find the table 'public.prompt_market_items' in the schema cache");
+  const error = normalizeMarketSchemaError(rawError);
+
+  assert.equal(isMarketSchemaMissing(rawError), true);
+  assert.equal(error.status, 503);
+  assert.equal(error.code, 'market_schema_missing');
+  assert.match(error.message, /prompt_market_\*/);
 });

@@ -4,6 +4,7 @@ import {
   Coins,
   Copy,
   FileText,
+  Info,
   LoaderCircle,
   MessageSquareText,
   RefreshCw,
@@ -126,8 +127,23 @@ export function GeneratorPage({
       if (typeof result.credits_balance === 'number') {
         setCredits((current) => (current ? { ...current, balance: result.credits_balance } : current));
       }
-      setStatus(result.prompt_id ? 'Prompt uretildi ve profilinize kaydedildi.' : 'Prompt uretildi.');
+      if (result.save_status === 'failed') {
+        setError(true);
+        setStatus(result.save_error || 'Prompt uretildi ama profilinize kaydedilemedi.');
+      } else {
+        setStatus(result.prompt_id ? 'Prompt uretildi ve profilinize kaydedildi.' : 'Prompt uretildi.');
+      }
     } catch (requestError) {
+      const data = (requestError as Error & {
+        data?: { prompt?: string; save_status?: string; save_error?: string };
+      }).data;
+      if (data?.save_status === 'failed' && typeof data.prompt === 'string') {
+        setPrompt(data.prompt);
+        setPromptId(null);
+        setError(true);
+        setStatus(data.save_error || 'Prompt uretildi ama profilinize kaydedilemedi.');
+        return;
+      }
       const message =
         requestError instanceof Error ? requestError.message : 'Beklenmeyen hata olustu.';
       setError(true);
@@ -375,6 +391,16 @@ export function GeneratorPage({
                   Yeni
                 </button>
               </div>
+              <aside className="context-help" aria-label="Context Pack aciklamasi">
+                <Info size={16} />
+                <div>
+                  <strong>Context Pack ne ise yarar?</strong>
+                  <p>
+                    Ayni proje, marka tonu veya sabit kurallari her promptta tekrar yazmamak icin kullanin.
+                    Secili paket; uretim, analiz ve revizyonlarda goreve eklenir.
+                  </p>
+                </div>
+              </aside>
               <select
                 className="select-field"
                 value={selectedContextPackId}
